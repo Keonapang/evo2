@@ -173,9 +173,14 @@ class Evo2:
             model_name: str = MODEL_NAMES[1],
             config_path: str = None,
             local_path: str = None,
+            remove_shards: bool = True,
     ):
         """
         Load HuggingFace checkpoint using StripedHyena 2.
+
+        If local_path is specified, loads from local_path.
+        Otherwise, downloads from HuggingFace.
+        If remove_shards is True, removes HF checkpoint shards after merging to .pt file.
         """
         if local_path is not None:
             print(f"Loading model from {local_path}...")
@@ -219,7 +224,7 @@ class Evo2:
                         part_num += 1
                     else:
                         break
-
+                
                 if parts:
                     print(f"Found {len(parts)} shards, merging them...")
                     with open(final_weights_path, 'wb') as outfile:
@@ -234,6 +239,13 @@ class Evo2:
                     
                     print(f"Successfully merged all shards into {final_weights_path}")
                     weights_path = final_weights_path
+                    if remove_shards and os.path.exists(final_weights_path):
+                        for part in parts:
+                            real_path = os.path.realpath(part)
+                            if os.path.exists(real_path):
+                                os.remove(real_path)
+                            if os.path.exists(part):
+                                os.remove(part)
                 else:
                     raise FileNotFoundError(f"Could not find {filename} or any of its shards in {repo_dir}")
                 
