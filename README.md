@@ -139,7 +139,7 @@ The [BRCA1 notebook](https://github.com/ArcInstitute/evo2/blob/main/notebooks/br
 
 The [generation notebook](https://github.com/ArcInstitute/evo2/blob/main/notebooks/generation/generation_notebook.ipynb) shows DNA sequence completion with Evo 2. This example shows prompt based DNA generation with Evo 2.
 
-### Nvidia NIM for Evo 2
+### Nvidia NIM
 
 Evo 2 is available on [Nvidia NIM](https://catalog.ngc.nvidia.com/containers?filters=&orderBy=scoreDESC&query=evo2&page=&pageSize=) and [hosted API](https://build.nvidia.com/arc/evo2-40b).
 
@@ -181,7 +181,7 @@ else:
 
 ### Very long sequences
 
-We are actively working on optimizing performance for long sequence processing. Vortex can currently compute over very long sequences via teacher prompting. However please note that forward pass on long sequences may currently be slow. 
+We are actively working on optimizing performance for long sequence processing. Vortex can currently compute over very long sequences via teacher prompting. However please note that forward pass on long sequences may currently be slow.
 
 ## Dataset
 
