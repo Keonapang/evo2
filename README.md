@@ -137,7 +137,9 @@ The [BRCA1 notebook](https://github.com/ArcInstitute/evo2/blob/main/notebooks/br
 - Performing zero-shot *BRCA1* variant effect predictions using Evo 2
 - Reference vs alternative allele normalization
 
-The [generation notebook](https://github.com/ArcInstitute/evo2/blob/main/notebooks/generation/generation_notebook.ipynb) shows DNA sequence completion with Evo 2. This example shows prompt based DNA generation with Evo 2.
+The [generation notebook](https://github.com/ArcInstitute/evo2/blob/main/notebooks/generation/generation_notebook.ipynb) shows DNA sequence completion with Evo 2. This example shows:
+- DNA prompt based generation and 'DNA autocompletion'
+- How to get and prompt using phylogenetic species tags for generation
 
 ### Nvidia NIM
 
