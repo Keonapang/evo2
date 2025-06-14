@@ -1,7 +1,5 @@
 
 library(data.table)
-dt <- fread("/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/Training/GENEBASS_RV_train_RV_pred_Oct10/height_FDR/genebass_AF001_chrall_vars_gene_final.txt") #  # 4926639 x  80
-
 
 train_path <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/Training/height_FDR/genebass_AF001_chrall_vars_gene_final.txt"  # 4926639 x  80 
 dt <- fread(paste0(train_path))
@@ -32,11 +30,20 @@ gene <- PLINK_AF_LOF_yhat[PLINK_AF_LOF_yhat$Gene.refGene == gene_name, ]
 write.table(gene, paste0(dir,"/", model_name, "_", gene_name,".txt"), sep="\t", row.names=FALSE, quote=FALSE)
 
 # write the top and bottom 1000 rows to a file 
-dir <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/Softwares/evo2/data"
+dir <- "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/data"
 if (!dir.exists(dir)) {
   dir.create(dir, recursive = TRUE)
 }
+setwd(dir)
 model_name <- "RovHer"
 write.table(top, paste0(dir,"/", model_name, "_top_100.txt"), sep="\t", row.names=FALSE, quote=FALSE)
 write.table(bottom, paste0(dir,"/", model_name, "_bottom_100.txt"), sep="\t", row.names=FALSE, quote=FALSE)
 write.table(gene, paste0(dir,"/", model_name, "_", gene_name,".txt"), sep="\t", row.names=FALSE, quote=FALSE)
+
+# Extract rows where PLINK_SNP_NAME starts with "17:"
+PLINK_AF_LOF_yhat_chr17 <- PLINK_AF_LOF_yhat[grep("^17:", PLINK_AF_LOF_yhat$PLINK_SNP_NAME), ]
+fwrite(PLINK_AF_LOF_yhat_chr17, # 301074 x 5
+       paste0(dir, "/", model_name, "_chr17.txt"), 
+       sep="\t", row.names=FALSE, quote=FALSE)
+    
+
