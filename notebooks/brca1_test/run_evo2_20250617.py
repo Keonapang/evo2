@@ -521,10 +521,8 @@ def plot_roc_curve(df):
     # Customize grid and tick colors
     plt.grid(color=GRID_COLOR, linestyle="--", linewidth=0.5)
     plt.tick_params(colors=FONT_COLOR)
-
     # Set background color
     plt.gca().set_facecolor(BACKGROUND_COLOR)
-
     # Add legend
     plt.legend(loc="lower right", frameon=True, facecolor=BACKGROUND_COLOR, edgecolor=GRID_COLOR)
     file_name = f"win{WINDOW_SIZE}_seq{SEQ_LENGTH}_ROC.png"
