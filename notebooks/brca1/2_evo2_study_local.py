@@ -27,6 +27,7 @@ parser.add_argument("--input", type=str, required=True,help="Input file with var
 parser.add_argument("--chr", type=int, required=True, help="Chromosome reference file")
 parser.add_argument("--gene", type=str, help="Gene name")
 args = parser.parse_args()
+
 ##########################################################################
 
 refdir = "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/GRChr38_ref_genome"
@@ -115,7 +116,7 @@ refseq = refseq.upper()  # Convert all bases to uppercase
 print(refseq_raw[:1000])  # 
 print(refseq[:1000])  # AAGCTTCTCACCCTGTTC | GATCATGCAGCTCTTCC
 refseq = refseq_raw
-print(len(refseq))  # 81195210 | 83197441
+print(len(refseq))  # 81,195,210 | 83197441
 
 # Extract the first 1,000 nucleotides from refseq_orig
 substring_to_check = refseq_orig[:100]
