@@ -53,7 +53,7 @@ def initialize_metrics_file():
         # Create a blank DataFrame with the specified columns
         columns = [
             "MODEL_SIZE", "SEQ_LENGTH", "WINDOW_SIZE", 
-            "load_model", "model_prep", "score_ref", "score_var", "AUROC"
+            "load_model", "model_prep", "score_ref", "score_var", "delta", "AUROC"
         ]
         df = pd.DataFrame(columns=columns)
         df.to_excel(metrics_file, index=False)
@@ -541,9 +541,6 @@ plot_roc_curve(brca1_df)
 # Initialize the metrics file if necessary: creates the file with the correct headers if it doesn't exist.
 metrics_file = initialize_metrics_file()
 
-# Simulate AUROC computation (replace with actual computation)
-t5 = 0.85  # Example placeholder for AUROC value
-
 # Create a new row of results
 new_row = {
     "MODEL_SIZE": MODEL_SIZE,
@@ -553,12 +550,11 @@ new_row = {
     "model_prep": t2,
     "score_ref": t3,
     "score_var": t4,
-    "AUROC": t5,
+    "delta": t5,
+    "AUROC": auroc,
 }
-
 # Append the row to the metrics file
 append_metrics_row(metrics_file, new_row)
-
 print(f"Metrics appended to {metrics_file}.")
 
 
