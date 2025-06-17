@@ -7,8 +7,11 @@
 # how many variants
 # window size
 
+# H200 (1 and 2 GPU configurations, 144 GB each)
+# H100 (2 GPU configuration, 80 GB each)
+
 !pip install matplotlib pandas seaborn scikit-learn openpyxl
-from Bio import SeqIO
+from Bio import SeqIO 
 import argparse
 import gzip
 import matplotlib.pyplot as plt
@@ -24,32 +27,13 @@ parser = argparse.ArgumentParser(description="Evo2 pilot study")
 parser.add_argument("--numvar", type=int, required=True, help="Number of variants to annotate per run")
 parser.add_argument("--win", type=int, required=True, default=500, help="Window size")
 parser.add_argument("--input", type=str, required=True,help="Input file with variants")
-parser.add_argument("--chr_ref", type=int, required=True, help="Chromosome reference file")
+parser.add_argument("--chr", type=int, required=True, help="Chromosome reference file")
 parser.add_argument("--gene", type=str, help="Gene name")
 args = parser.parse_args()
-##########################################################################
-# # Define the local directory where files will be saved
-# dir <- "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/GRChr38_ref_genome"
-# if (!dir.exists(dir)) {
-#   dir.create(dir, recursive = TRUE)
-# }
-# base_url <- "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/chromosomes/"
 
-# for (chr in 1:22) {
-#   # Construct the file name and URL
-#   file_name <- paste0("chr", chr, ".fa.gz")
-#   file_url <- paste0(base_url, file_name)
-#   local_file_path <- file.path(dir, file_name)
-#   message(paste("Downloading", file_name, "from", file_url, "..."))
-  #   tryCatch({
-#     download.file(file_url, destfile = local_file_path, mode = "wb")
-#     message(paste("Saved", file_name, "to", local_file_path))
-#   }, error = function(e) {
-#     message(paste("Failed to download", file_name, ":", e$message))
-#   })
-# }
+######################### ######################## ########################
+######################### ######################## ########################
 
-# set output path
 root = "/home/ubuntu/nvidia-workbench"
 os.makedirs(root, exist_ok=True)
 outdir = f"{root}/output"
@@ -264,3 +248,8 @@ plt.xlabel('PCA Dimension 1')
 plt.ylabel('PCA Dimension 2')
 plt.title('Visualization of Evo 2 Embedding')
 plt.show()
+
+
+
+ # Time: 44.48s | 24.92043113708496 seconds
+ # Time: 44.484 s | 25.011 seconds

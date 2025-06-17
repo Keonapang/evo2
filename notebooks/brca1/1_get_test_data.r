@@ -47,3 +47,7 @@ fwrite(PLINK_AF_LOF_yhat_chr17, # 301074 x 5
        sep="\t", row.names=FALSE, quote=FALSE)
     
 
+
+
+# obtain ref genome file from NCBI
+# https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40/
