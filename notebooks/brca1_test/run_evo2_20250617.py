@@ -14,7 +14,6 @@
 # done
 
 # !pip install matplotlib pandas seaborn scikit-learn openpyxl biopython
-FAST_CI_MODE: bool = os.environ.get("FAST_CI_MODE", False)
 
 import glob
 import gzip
@@ -31,6 +30,7 @@ import seaborn as sns
 import torch
 from Bio import SeqIO
 from sklearn.metrics import auc, roc_auc_score, roc_curve
+FAST_CI_MODE: bool = os.environ.get("FAST_CI_MODE", False)
 
 ######################### ######################## ########################
 # Load arguments
