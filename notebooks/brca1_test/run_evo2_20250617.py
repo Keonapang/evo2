@@ -8,13 +8,12 @@
 
 # for ws in $WINDOW_SIZE; do
 #   for sl in $SEQ_LENGTH; do
-#     echo "Running: 2_evo2_study_20250617.py -SEQ_LENGTH $sl -WINDOW_SIZE $ws -MODEL_SIZE $MODEL_SIZE"
-#     python 2_evo2_study_20250617.py --SEQ_LENGTH $sl --WINDOW_SIZE $ws --MODEL_SIZE $MODEL_SIZE
+#     echo "Running: run_evo2_20250617.py -SEQ_LENGTH $sl -WINDOW_SIZE $ws -MODEL_SIZE $MODEL_SIZE"
+#     python run_evo2_20250617.py --SEQ_LENGTH $sl --WINDOW_SIZE $ws --MODEL_SIZE $MODEL_SIZE
 #   done
 # done
 
 # !pip install matplotlib pandas seaborn scikit-learn openpyxl biopython
-subprocess.run("pip install matplotlib pandas seaborn scikit-learn openpyxl biopython", shell=True, check=True)
 FAST_CI_MODE: bool = os.environ.get("FAST_CI_MODE", False)
 
 import glob
@@ -35,6 +34,7 @@ from sklearn.metrics import auc, roc_auc_score, roc_curve
 
 ######################### ######################## ########################
 # Load arguments
+import argparse
 parser = argparse.ArgumentParser(description="Evo2 pilot study")
 parser.add_argument("--SEQ_LENGTH", type=int, required=True, default=100, help="SEQ_LENGTH")
 parser.add_argument("--WINDOW_SIZE", type=int, required=True, default=4096, help="Window size")
@@ -42,6 +42,7 @@ parser.add_argument("--MODEL_SIZE", type=str, help="MODEL_SIZE")
 args = parser.parse_args()
 OUTPUT_DIR = "brca1_fasta_files"
 DATA_DIR = "brca1"
+SEQ_LENGTH = args.SEQ_LENGTH
 
 ########################################################################
 # Define functions 
@@ -207,6 +208,81 @@ def subset_dataframe(df, SEQ_LENGTH):
     print("New subset:", subset_df.shape) 
     return subset_df
 
+WINDOW_SIZE = args.WINDOW_SIZE
+MODEL_SIZE = args.MODEL_SIZE
+def generate_fasta_files(df, seq_chr17, output_dir="brca1_fasta_files", window_size=WINDOW_SIZE):
+    """Generate FASTA files for reference and variant sequences.
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        Dataframe with variant information
+    seq_chr17 : str
+        Chromosome 17 sequence
+    output_dir : str
+        Output directory for FASTA files
+    window_size : int
+        Size of sequence window
+    Returns:
+    --------
+    pandas.DataFrame
+        Dataframe with added columns for FASTA names
+    """
+    # Create output directory
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Paths for output files
+    ref_fasta_path = output_dir / "brca1_reference_sequences.fasta"
+    var_fasta_path = output_dir / "brca1_variant_sequences.fasta"
+
+    # Track unique sequences
+    ref_sequences = set()
+    var_sequences = set()
+    ref_seq_to_name = {}
+
+    # Store unique sequences with metadata for writing
+    ref_entries = []
+    var_entries = []
+    ref_names = []
+    var_names = []
+
+    # Collect unique reference and variant sequences
+    for idx, row in df.iterrows():
+        ref_seq, var_seq = parse_sequences(row["pos"], row["ref"], row["alt"], seq_chr17, WINDOW_SIZE)
+
+        # Add to sets to ensure uniqueness
+        if ref_seq not in ref_sequences:
+            ref_sequences.add(ref_seq)
+            ref_name = f"BRCA1_ref_pos_{row['pos']}_{row['ref']}_class_{row['class']}"
+
+            ref_entries.append(f">{ref_name}\n{ref_seq}\n")
+            ref_names.append(ref_name)
+            ref_seq_to_name[ref_seq] = ref_name
+        else:
+            ref_name = ref_seq_to_name[ref_seq]
+            ref_names.append(ref_name)
+
+        if var_seq not in var_sequences:
+            var_sequences.add(var_seq)
+            var_name = f"BRCA1_var_pos_{row['pos']}_{row['ref']}to{row['alt']}_class_{row['class']}"
+
+            var_entries.append(f">{var_name}\n{var_seq}\n")
+            var_names.append(var_name)
+        else:
+            assert False, "Duplicate variant sequence"
+    # Write unique sequences to FASTA files
+    with open(ref_fasta_path, "w") as f:
+        f.writelines(ref_entries)
+    with open(var_fasta_path, "w") as f:
+        f.writelines(var_entries)
+    # Add FASTA names to dataframe
+    df_with_names = df.copy()
+    df_with_names["ref_fasta_name"] = ref_names
+    df_with_names["var_fasta_name"] = var_names
+    print(f"Total unique reference sequences: {len(ref_sequences)}")
+    print(f"Total unique variant sequences: {len(var_sequences)}")
+    return df_with_names
+
 def check_fp8_support():
     """Check if FP8 is supported on the current GPU.
     FP8 requires compute capability 8.9+ (Ada Lovelace/Hopper architecture or newer).
@@ -234,7 +310,7 @@ brca1_df = load_brca1_data(excel_path)
 print("Dimensions of brca1_df:", brca1_df.shape) # Dimensions of brca1_df: (3893, 6)
 
 # 3. Subset data using subset_dataframe()
-brca1_df2 = subset_dataframe(brca1_df,SEQ_LENGTH)
+brca1_df2 = subset_dataframe(brca1_df,SEQ_LENGTH=SEQ_LENGTH)
 brca1_df.head(2)
 print("Loaded df:", brca1_df.shape)
 
