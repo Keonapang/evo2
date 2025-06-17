@@ -23,6 +23,8 @@ import os
 from pathlib import Path
 import time
 import subprocess
+import warnings
+warnings.simplefilter("ignore", FutureWarning)
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -43,31 +45,46 @@ args = parser.parse_args()
 OUTPUT_DIR = "brca1_fasta_files"
 DATA_DIR = "brca1"
 SEQ_LENGTH = args.SEQ_LENGTH
+WINDOW_SIZE = args.WINDOW_SIZE
+MODEL_SIZE = args.MODEL_SIZE
 
 ########################################################################
 # Define functions 
 ########################################################################
-# Initialize the metrics file if it doesn't already exist
+# Initialize the metrics files if they don't already exist
 def initialize_metrics_file():
-    metrics_file = Path("metrics.xlsx")
-    if not metrics_file.exists():
+    metrics_xlsx = Path("metrics.xlsx")
+    metrics_csv = Path("metrics.csv")
+    
+    if not metrics_xlsx.exists() or not metrics_csv.exists():
         # Create a blank DataFrame with the specified columns
         columns = [
             "MODEL_SIZE", "SEQ_LENGTH", "WINDOW_SIZE", 
             "load_model", "model_prep", "score_ref", "score_var", "delta", "AUROC"
         ]
         df = pd.DataFrame(columns=columns)
-        df.to_excel(metrics_file, index=False)
-    return metrics_file
+        
+        # Write to both .xlsx and .csv files
+        if not metrics_xlsx.exists():
+            df.to_excel(metrics_xlsx, index=False)
+        if not metrics_csv.exists():
+            df.to_csv(metrics_csv, index=False)
+    
+    return metrics_xlsx, metrics_csv
 
-# append_metrics_row() function appends a new row of results to the file after each run.
-def append_metrics_row(metrics_file, row_data):
-    # Load the existing Excel file
-    df = pd.read_excel(metrics_file)
-    # Append the new row
-    df = pd.concat([df, pd.DataFrame([row_data])], ignore_index=True)
-    # Save back to the Excel file
-    df.to_excel(metrics_file, index=False)
+# Append results to both .xlsx and .csv files
+def append_metrics_row(metrics_files, row_data):
+    metrics_xlsx, metrics_csv = metrics_files
+    
+    # Update the .xlsx file
+    df_xlsx = pd.read_excel(metrics_xlsx)
+    df_xlsx = pd.concat([df_xlsx, pd.DataFrame([row_data])], ignore_index=True)
+    df_xlsx.to_excel(metrics_xlsx, index=False)
+    
+    # Update the .csv file
+    df_csv = pd.read_csv(metrics_csv)
+    df_csv = pd.concat([df_csv, pd.DataFrame([row_data])], ignore_index=True)
+    df_csv.to_csv(metrics_csv, index=False)
 
 def download_data(data_dir="brca1", commit_hash="3819474bee6c24938016614411f1fa025e542bbe"):
     """Download required data files if they don't exist locally.
@@ -184,8 +201,8 @@ def sample_data(df, sample_frac=1.0, balanced=True, disable=True, random_state=4
         # Calculate the number of rows to sample
         return df.sample(frac=sample_frac, random_state=random_state).reset_index(drop=True)
 
-# Write a function that takes in SEQ_LENGTH (variable storing one an integer) and randomly subsets the dataframe (df) to SEQ_LENGTH number of rows and returns the saubset of the dataframe 
-def subset_dataframe(df, SEQ_LENGTH):
+# Write a function that takes in seq (variable storing one an integer) and randomly subsets the dataframe (df) to SEQ_LENGTH number of rows and returns the saubset of the dataframe 
+def subset_dataframe(df, seq):
     """
     Randomly subsets the dataframe to SEQ_LENGTH number of rows.
     Parameters:
@@ -199,17 +216,49 @@ def subset_dataframe(df, SEQ_LENGTH):
     pandas.DataFrame
         A subset of the dataframe with SEQ_LENGTH rows.
     """
-    print("Entering subset_dataframe function...")
-    print("Original dataframe:", df.shape) 
-    print("Number of rows to extract:", SEQ_LENGTH) 
-    if SEQ_LENGTH > len(df):
-        raise ValueError(f"SEQ_LENGTH ({SEQ_LENGTH}) is greater than the number of rows in the DataFrame ({len(df)}).")
-    subset_df = df.sample(n=SEQ_LENGTH, random_state=42)
+    print("Number of rows to extract:", seq) 
+    if seq > len(df):
+        raise ValueError(f"SEQ_LENGTH ({seq}) is greater than the number of rows in the DataFrame ({len(df)}).")
+    subset_df = df.sample(n=seq, random_state=42)
     print("New subset:", subset_df.shape) 
     return subset_df
 
-WINDOW_SIZE = args.WINDOW_SIZE
-MODEL_SIZE = args.MODEL_SIZE
+def parse_sequences(pos, ref, alt, seq_chr17, window_size=WINDOW_SIZE):
+    """Parse reference and variant sequences from the reference genome sequence.
+    Parameters:
+    -----------
+    pos : int
+        Position (1-indexed)
+    ref : str
+        Reference base
+    alt : str
+        Alternate base
+    seq_chr17 : str
+        Full chromosome 17 sequence
+    window_size : int
+        Size of the sequence window to extract
+
+    Returns:
+    --------
+    tuple
+        (reference_sequence, variant_sequence)
+    """
+    p = pos - 1  # Convert to 0-indexed position
+    full_seq = seq_chr17
+
+    ref_seq_start = max(0, p - window_size // 2)
+    ref_seq_end = min(len(full_seq), p + window_size // 2)
+    ref_seq = seq_chr17[ref_seq_start:ref_seq_end]
+    snv_pos_in_ref = min(window_size // 2, p)
+    var_seq = ref_seq[:snv_pos_in_ref] + alt + ref_seq[snv_pos_in_ref + 1 :]
+
+    # Sanity checks
+    assert len(var_seq) == len(ref_seq)
+    assert ref_seq[snv_pos_in_ref] == ref
+    assert var_seq[snv_pos_in_ref] == alt
+
+    return ref_seq, var_seq
+
 def generate_fasta_files(df, seq_chr17, output_dir="brca1_fasta_files", window_size=WINDOW_SIZE):
     """Generate FASTA files for reference and variant sequences.
     Parameters:
@@ -248,7 +297,7 @@ def generate_fasta_files(df, seq_chr17, output_dir="brca1_fasta_files", window_s
 
     # Collect unique reference and variant sequences
     for idx, row in df.iterrows():
-        ref_seq, var_seq = parse_sequences(row["pos"], row["ref"], row["alt"], seq_chr17, WINDOW_SIZE)
+        ref_seq, var_seq = parse_sequences(row["pos"], row["ref"], row["alt"], seq_chr17, window_size)
 
         # Add to sets to ensure uniqueness
         if ref_seq not in ref_sequences:
@@ -310,12 +359,12 @@ brca1_df = load_brca1_data(excel_path)
 print("Dimensions of brca1_df:", brca1_df.shape) # Dimensions of brca1_df: (3893, 6)
 
 # 3. Subset data using subset_dataframe()
-brca1_df2 = subset_dataframe(brca1_df,SEQ_LENGTH=SEQ_LENGTH)
+brca1_df = subset_dataframe(brca1_df,SEQ_LENGTH)
 brca1_df.head(2)
 print("Loaded df:", brca1_df.shape)
 
 # 4. Write FASTA files for ref and variant sequences
-brca1_df = generate_fasta_files(brca1_df, seq_chr17, output_dir=OUTPUT_DIR)
+brca1_df = generate_fasta_files(brca1_df, seq_chr17, output_dir=OUTPUT_DIR, window_size=WINDOW_SIZE)
 print("OUTPUT_DIR:", OUTPUT_DIR)
 
 ############################################################
@@ -401,7 +450,7 @@ print(f"Preparation: {t2} s")
 
 # Score reference
 start_time = time.time()
-print(f"Running command: {predict_ref_command}")
+print(f"Scoring reference seq...")
 subprocess.run(predict_ref_command, shell=True, check=True)
 end_time = time.time()
 t3 = end_time - start_time
@@ -409,7 +458,7 @@ print(f"Scoring Reference seq using WINDOW_SIZE = {WINDOW_SIZE} and SEQ_LENGTH =
 
 # Score variant
 start_time = time.time()
-print(f"Running command: {predict_var_command}")
+print(f"Scoring variant seq...")
 subprocess.run(predict_var_command, shell=True, check=True)
 end_time = time.time()
 t4 = end_time - start_time
@@ -606,8 +655,6 @@ def plot_roc_curve(df):
     print(f"ROC curve saved to {file_name}")
 plot_roc_curve(brca1_df)
 
-
-
 ############################################################
 # Append results to metrics.xlsx
 ############################################################
@@ -631,11 +678,86 @@ new_row = {
 append_metrics_row(metrics_file, new_row)
 print(f"Metrics appended to {metrics_file}.")
 
+print(f"Scoring Variant seq using WINDOW_SIZE = {WINDOW_SIZE} and SEQ_LENGTH = {SEQ_LENGTH}")  
+print(f"    t3: {t3} s")  
+print(f"    t4: {t4} s")  
+print(f"    AUROC: {auroc:.2}")
 
 ############ 6. Extract Evo2 embeddings ###############
 
-# # Load 7B parameter model (40B also available)
 # evo2_model = Evo2('evo2_7b')  
+# sequence_wt="TGTTCCAATGAACTTTAACACATTAGAAAA"
+# sequence_mut="TGTTCCAATGAACTGTAACACATTAGAAAA"
+
+# # Tokenize wildtype sequence
+# input_ids_wt = torch.tensor(
+#     evo2_model.tokenizer.tokenize(sequence_wt),  # Byte-level tokenization
+#     dtype=torch.int,
+# ).unsqueeze(0).to('cuda:0')  # Batch dimension + GPU acceleration
+
+# # Tokenize variant sequence
+# input_ids_mut = torch.tensor(
+#     evo2_model.tokenizer.tokenize(sequence_mut),
+#     dtype=torch.int,
+# ).unsqueeze(0).to('cuda:0')  # Batch dimension + GPU acceleration
+
+# # # Extract embeddings from layer 28's MLP component
+# layer_name = 'blocks.28.mlp.l3' # intermediate layer (part of the model's transformer structure)
+
+# # Extract embeddings for the wildtype sequence
+# outputs_wt, embeddings_wt = evo2_model(
+#     input_ids_wt,
+#     return_embeddings=True,
+#     layer_names=[layer_name]
+# )
+
+# # Extract embeddings for the variant sequence
+# outputs_mut, embeddings_mut = evo2_model(
+#     input_ids_mut,
+#     return_embeddings=True,
+#     layer_names=[layer_name]
+# )
+
+# # Get the embedding tensors
+# embedding_tensor_wt = embeddings_wt[layer_name].squeeze(0).cpu().detach()
+# embedding_tensor_mut = embeddings_mut[layer_name].squeeze(0).cpu().detach()
+
+
+# # Save wildtype embeddings
+# np.save("embedding_wt.npy", embedding_tensor_wt.numpy())
+# torch.save(embedding_tensor_wt, "embedding_wt.pt")
+
+# # Save variant embeddings
+# np.save("embedding_mut.npy", embedding_tensor_mut.numpy())
+# torch.save(embedding_tensor_mut, "embedding_mut.pt")
+
+
+# # Convert embeddings to NumPy arrays
+# embedding_wt_np = embedding_tensor_wt.numpy()
+# embedding_mut_np = embedding_tensor_mut.numpy()
+
+# # Perform PCA on both embeddings
+# pca = PCA(n_components=2)
+# embedding_wt_2d = pca.fit_transform(embedding_wt_np)
+# embedding_mut_2d = pca.transform(embedding_mut_np)  # Use the same PCA transformation
+
+# # Plot both embeddings
+# plt.figure(figsize=(10, 8))
+
+# # Wildtype embeddings
+# plt.scatter(embedding_wt_2d[:, 0], embedding_wt_2d[:, 1], label='Wildtype', c='blue', alpha=0.6)
+
+# # Variant embeddings
+# plt.scatter(embedding_mut_2d[:, 0], embedding_mut_2d[:, 1], label='Variant', c='red', alpha=0.6)
+
+# plt.legend()
+# plt.colorbar(label='Position in sequence')
+# plt.xlabel('PCA Dimension 1')
+# plt.ylabel('PCA Dimension 2')
+# plt.title('Comparison of Wildtype vs Variant Embeddings')
+# plt.show()
+
+
 
 # # Tokenize input DNA sequence (handles any length ≤1M bp)
 # sequence = 'ACGT' # converted into tokens suitable for input
@@ -669,8 +791,13 @@ print(f"Metrics appended to {metrics_file}.")
 # print("Tail of PyTorch embedding:\n", embedding_tensor[-5:])  # Last 5 rows
 
 # # Example: Using embeddings for variant effect prediction
-# wildtype_emb = evo2_model(sequence_wt).embeddings[layer_name]
-# mutant_emb = evo2_model(sequence_mut).embeddings[layer_name]
+refseq="TGTTCCAATGAACTTTAACACATTAGAAAA"
+varseq="TGTTCCAATGAACTGTAACACATTAGAAAA"
+# ref_emb = evo2_model(refseq).embeddings[layer_name]
+# var_emb = evo2_model(varseq).embeddings[layer_name]
+
+# # Calculate functional impact score
+# impact_score = cosine_similarity(ref_emb, var_emb)
 
 # # Calculate functional impact score
 # impact_score = cosine_similarity(wildtype_emb, mutant_emb)
