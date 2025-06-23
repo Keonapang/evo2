@@ -29,82 +29,73 @@ parser.add_argument("--gene", type=str, help="Gene name")
 args = parser.parse_args()
 
 ##########################################################################
-
+numvar=1000
+win=8192
+input="RovHer_chr17.txt"
+chr = "17"
+gene = "BRCA1"
+##########################################################################
 refdir = "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/GRChr38_ref_genome"
 dir = "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2"
 dir2 = "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/data"
-win=8192
 
 # set output path
-root = "/home/ubuntu/nvidia-workbench"
-os.makedirs(root, exist_ok=True)
-outdir = f"{root}/output"
+outdir = f"./output"
 os.makedirs(outdir, exist_ok=True)
 print(f"Output dir : {outdir}")
 
-# input file
-os.chdir(refdir)
-file_name = f"GRCh38_chr{chr}.fasta"
+# input files
+input_file = f"{dir2}/{input}"
+ref_file = f"{refdir}/GRCh38_chr{chr}.fasta"
 
-# Check if input files exists
-if not os.path.exists(input):
-    raise FileNotFoundError(f"Input variants {input} does not exist.")
-file_name = f"GRCh37_chr{chr}.fasta"
-if not os.path.exists(file_name):
-    raise FileNotFoundError(f"Reference {file_name} does not exist.")
+################################################
+# Load SNV dataset from local environment
+################################################
 
-####### 2. Load SNV dataset from local environment ############
-os.chdir(dir)
+# Check if file exists
+if not os.path.exists(input_file):
+    raise FileNotFoundError(f"Input {input_file} does not exist.")
 
-brca1_df = pd.read_excel(
-    os.path.join('41586_2018_461_MOESM3_ESM.xlsx'),
-    header=2, # Skip the first 2 rows (0-based index) and use the 3rd row as the header
-)
-brca1_df = brca1_df[[
-    'chromosome', 'position (hg19)', 'reference', 'alt', 'function.score.mean', 'func.class',
-]]
-brca1_df.head(3)
+data = pd.read_csv(input_file, sep="\t")  # Assuming the file is tab-delimited
 
-# Rename columns
-brca1_df.rename(columns={
-    'chromosome': 'chrom',
-    'position (hg19)': 'pos',
-    'reference': 'ref',
-    'alt': 'alt',
-    'function.score.mean': 'score',
-    'func.class': 'class',
-}, inplace=True)
+# Split the `PLINK_SNP_NAME` column into 4 new columns: chrom, pos, ref, alt
+data[["chrom", "pos", "ref", "alt"]] = data["PLINK_SNP_NAME"].str.split(":", expand=True)
 
-# Convert to two-class system
-brca1_df['class'] = brca1_df['class'].replace(['FUNC', 'INT'], 'FUNC/INT')
-brca1_df.head(10)
+# Convert `pos` to integer for correct data type
+data["pos"] = data["pos"].astype(int)
+
+# Print the dimensions of the resulting DataFrame
+print("Final data dimensions:", data.shape)
+data.head(10)
 
 ################################################
 # REFERENCE GENOME
 ################################################
-# Read the reference genome sequence of chromosome 17 f"chr{chr}.fa.gz"
+
 os.chdir(refdir)
-if not os.path.exists(file_name):
-    raise FileNotFoundError(f"Reference {file_name} does not exist.")
-print("Target file name:", file_name)
-if not os.path.exists(file_name):
-    print(f"File {file_name} does not exist in {refdir}.")
+print("Target file name:", ref_file)
+
+# Read the reference genome sequence 
+if not os.path.exists(ref_file):
+    print(f"File {ref_file} does not exist in {refdir}.")
 else:
-    print(f"File {file_name} exists. Opening it...")
+    print(f"File {ref_file} exists. Opening it...")
 try:
-    with open(file_name, "rt") as handle:
+    with open(ref_file, "rt") as handle:
         for record in SeqIO.parse(handle, "fasta"):
             refseq_raw = str(record.seq)  # Convert sequence to string
             break 
-    print(f"First bases of the sequence: {refseq_raw[:20]}") # AAGCTTCTCACCCTGTTCCT
-    print(len(refseq_raw))  # 81195210
 except FileNotFoundError:
-    print(f"Error: File {file_name} not found in directory {os.getcwd()}.")
+    print(f"Error: File {ref_file} not found in directory {os.getcwd()}.")
 except Exception as e:
     print(f"An error occurred while reading the file: {e}")
 
+print(len(refseq_raw))  # 81195210 | 83257441
+
 # clean up
 refseq = refseq_raw.lstrip("N")  # Remove leading 'N's
+print(f"First bases of the sequence: {refseq[:20]}") # AAGCTTCTCACCCTGTTCCT
+print(len(refseq))  # 83197441
 
 # Either convert to uppercase or REMOVE repetitive sequences
 refseq = refseq.upper()  # Convert all bases to uppercase
