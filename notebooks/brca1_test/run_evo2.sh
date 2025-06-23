@@ -7,10 +7,6 @@ WINDOW_SIZE="1024"
 SEQ_LENGTH="3890"
 MODEL_SIZE="7b" # 1.5 minutes to download
 
-WINDOW_SIZE="1024"
-SEQ_LENGTH="10"
-MODEL_SIZE="40b"
-
 WINDOW_SIZE="1024 2048 4096 8192"
 SEQ_LENGTH="50 84 150 250 500 1000 2000 8000"
 MODEL_SIZE="40b" # 33 minutes to download, model split into 4 parts (savanna_evo2_40b_base.pt.part0-3) stored in ./nemo2_evo2_40b_8k
@@ -21,6 +17,24 @@ for ws in $WINDOW_SIZE; do
     python run_evo2_20250617.py --SEQ_LENGTH $sl --WINDOW_SIZE $ws --MODEL_SIZE $MODEL_SIZE
   done
 done
+
+#########################################
+WINDOW_SIZE="2048 4096 8192"
+SEQ_LENGTH="84 150 250 500 2000 5000 8000 10000"
+MODEL_SIZE="7b" # 1.5 minutes to download
+input_file="RovHer_chr17.txt"
+REF_CHR="17"
+SUBSET_METHOD="random" # random, top, bottom, balanced
+
+for ws in $WINDOW_SIZE; do
+  for sl in $SEQ_LENGTH; do
+    echo "Running: run_evo2_20250617.py -SEQ_LENGTH $sl -WINDOW_SIZE $ws -MODEL_SIZE $MODEL_SIZE"
+    python run_evo2_rovher.py --SEQ_LENGTH $sl --WINDOW_SIZE $ws --MODEL_SIZE $MODEL_SIZE --INPUT_FILE $input_file --REF_CHR $REF_CHR --SUBSET_METHOD $SUBSET_METHOD
+  done
+done
+
+#########################################
+
 
 docker run -it --gpus all -p 8888:8888 helical_with_evo_2 jupyter notebook --ip=0.0.0.0 --allow-root
 

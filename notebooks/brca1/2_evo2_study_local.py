@@ -94,8 +94,8 @@ print(len(refseq_raw))  # 81195210 | 83257441
 
 # refseq = refseq_raw.lstrip("N") # clean up: Remove leading 'N's
 refseq=refseq_raw
-print(f"First bases of the sequence: {refseq[:20]}") 
 print(len(refseq))  # 83197441
+print(f"First bases of the sequence: {refseq[:20]}") 
 
 ################################################
 
@@ -128,7 +128,7 @@ def parse_sequences(pos, ref, alt):
     return ref_seq, var_seq
 
 # Parse sequences for the first variant
-row = data.iloc[1]
+row = data.iloc[3]
 ref_seq, var_seq = parse_sequences(row['pos'], row['ref'], row['alt']) # 41276135, T. G
 
 print(f'refseq length: {len(refseq)}') # 81,195,210 | 83197441
