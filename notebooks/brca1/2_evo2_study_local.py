@@ -29,9 +29,9 @@ parser.add_argument("--gene", type=str, help="Gene name")
 args = parser.parse_args()
 
 ##########################################################################
-numvar=1000
-win=8192
-input="RovHer_chr17.txt"
+numvar=100
+win=100
+input="RovHer_BRCA1.txt"
 chr = "17"
 gene = "BRCA1"
 ##########################################################################
@@ -48,9 +48,9 @@ print(f"Output dir : {outdir}")
 input_file = f"{dir2}/{input}"
 ref_file = f"{refdir}/GRCh38_chr{chr}.fasta"
 
-################################################
+##########################################################################
 # Load SNV dataset from local environment
-################################################
+##########################################################################
 
 # Check if file exists
 if not os.path.exists(input_file):
@@ -68,9 +68,9 @@ data["pos"] = data["pos"].astype(int)
 print("Final data dimensions:", data.shape)
 data.head(10)
 
-################################################
+##########################################################################
 # REFERENCE GENOME
-################################################
+##########################################################################
 
 os.chdir(refdir)
 print("Target file name:", ref_file)
@@ -101,6 +101,7 @@ print(f"First bases of the sequence: {refseq[:20]}")
 
 ################################################
 
+win = 512
 # Extracts A window of 8,192 bases surrounding the variant position.
 def parse_sequences(pos, ref, alt):
     """
@@ -143,3 +144,18 @@ print(f'Reference sequence for chr17: {refseq[4082:4112]}') # CACGCACCTGCTACACTC
 
 
 
+import os
+ref_seq_file = "BRCA1_reference_sequence.txt"
+var_seq_file = "BRCA1_variant_sequence.txt"
+
+ref_seq_path = os.path.join(dir2, ref_seq_file)
+var_seq_path = os.path.join(dir2, var_seq_file)
+
+with open(ref_seq_path, "w") as ref_file:
+    ref_file.write(f">Reference Sequence\n")
+    ref_file.write(ref_seq)
+    
+# Save variant sequence
+with open(var_seq_path, "w") as var_file:
+    var_file.write(f">Variant Sequence\n")
+    var_file.write(var_seq)

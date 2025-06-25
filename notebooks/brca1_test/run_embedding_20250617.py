@@ -13,7 +13,10 @@
 #   done
 # done
 
-# !pip install matplotlib pandas seaborn scikit-learn openpyxl biopython
+pip install matplotlib pandas seaborn scikit-learn openpyxl biopython
+
+# Docker image
+# nvcr.io/nvidia/clara/bionemo-framework:2.5
 
 import glob
 import gzip
@@ -22,6 +25,7 @@ import math
 import os
 from pathlib import Path
 import time
+import openpyxl
 import subprocess
 import warnings
 warnings.simplefilter("ignore", FutureWarning)
@@ -63,13 +67,11 @@ def initialize_metrics_file():
             "load_model", "model_prep", "score_ref", "score_var", "delta", "AUROC"
         ]
         df = pd.DataFrame(columns=columns)
-        
         # Write to both .xlsx and .csv files
         if not metrics_xlsx.exists():
             df.to_excel(metrics_xlsx, index=False)
         if not metrics_csv.exists():
             df.to_csv(metrics_csv, index=False)
-    
     return metrics_xlsx, metrics_csv
 
 # Append results to both .xlsx and .csv files
@@ -85,83 +87,6 @@ def append_metrics_row(metrics_files, row_data):
     df_csv = pd.read_csv(metrics_csv)
     df_csv = pd.concat([df_csv, pd.DataFrame([row_data])], ignore_index=True)
     df_csv.to_csv(metrics_csv, index=False)
-
-def download_data(data_dir="brca1", commit_hash="3819474bee6c24938016614411f1fa025e542bbe"):
-    """Download required data files if they don't exist locally.
-    Parameters:
-    -----------
-    data_dir : str
-        Directory to store downloaded files
-    commit_hash : str
-        GitHub commit hash for data version
-    """
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir)
-    excel_path = os.path.join(data_dir, "41586_2018_461_MOESM3_ESM.xlsx")
-    genome_path = os.path.join(data_dir, "GRCh37.p13_chr17.fna.gz")
-
-    if not os.path.exists(excel_path):
-        os.system(
-            f"wget https://github.com/ArcInstitute/evo2/raw/{commit_hash}/notebooks/brca1/41586_2018_461_MOESM3_ESM.xlsx -O {excel_path}"
-        )
-    if not os.path.exists(genome_path):
-        os.system(
-            f"wget https://github.com/ArcInstitute/evo2/raw/{commit_hash}/notebooks/brca1/GRCh37.p13_chr17.fna.gz -O {genome_path}"
-        )
-    return excel_path, genome_path
-
-def load_genome_sequence(genome_path):
-    """Load genome sequence from FASTA file.
-    Parameters:
-    -----------
-    genome_path : str
-        Path to the genome FASTA file
-    Returns:
-    --------
-    str
-        Genome sequence string
-    """
-    with gzip.open(genome_path, "rt") as handle:
-        for record in SeqIO.parse(handle, "fasta"):
-            return str(record.seq)
-    raise ValueError("Failed to parse genome sequence")
-
-def load_brca1_data(excel_path):
-    """Load and preprocess BRCA1 data from Excel file.
-    Parameters:
-    -----------
-    excel_path : str
-        Path to the Excel file
-    Returns:
-    --------
-    pandas.DataFrame
-        Processed BRCA1 dataframe
-    """
-    brca1_df = pd.read_excel(excel_path, header=2)
-    # Select and rename columns
-    brca1_df = brca1_df[
-        [
-            "chromosome",
-            "position (hg19)",
-            "reference",
-            "alt",
-            "function.score.mean",
-            "func.class",
-        ]
-    ]
-    brca1_df.rename(
-        columns={
-            "chromosome": "chrom",
-            "position (hg19)": "pos",
-            "reference": "ref",
-            "alt": "alt",
-            "function.score.mean": "score",
-            "func.class": "class",
-        },
-        inplace=True,
-    ) # Convert to two-class system
-    brca1_df["class"] = brca1_df["class"].replace(["FUNC", "INT"], "FUNC/INT")
-    return brca1_df
 
 def sample_data(df, sample_frac=1.0, balanced=True, disable=True, random_state=42):
     """Sample dataframe, optionally with balanced classes.
@@ -245,7 +170,6 @@ def parse_sequences(pos, ref, alt, seq_chr17, window_size=WINDOW_SIZE):
     """
     p = pos - 1  # Convert to 0-indexed position
     full_seq = seq_chr17
-
     ref_seq_start = max(0, p - window_size // 2)
     ref_seq_end = min(len(full_seq), p + window_size // 2)
     ref_seq = seq_chr17[ref_seq_start:ref_seq_end]
@@ -256,103 +180,11 @@ def parse_sequences(pos, ref, alt, seq_chr17, window_size=WINDOW_SIZE):
     assert len(var_seq) == len(ref_seq)
     assert ref_seq[snv_pos_in_ref] == ref
     assert var_seq[snv_pos_in_ref] == alt
-
     return ref_seq, var_seq
-
-def generate_fasta_files(df, seq_chr17, output_dir="brca1_fasta_files", window_size=WINDOW_SIZE):
-    """Generate FASTA files for reference and variant sequences.
-    Parameters:
-    -----------
-    df : pandas.DataFrame
-        Dataframe with variant information
-    seq_chr17 : str
-        Chromosome 17 sequence
-    output_dir : str
-        Output directory for FASTA files
-    window_size : int
-        Size of sequence window
-    Returns:
-    --------
-    pandas.DataFrame
-        Dataframe with added columns for FASTA names
-    """
-    # Create output directory
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Paths for output files
-    ref_fasta_path = output_dir / "brca1_reference_sequences.fasta"
-    var_fasta_path = output_dir / "brca1_variant_sequences.fasta"
-
-    # Track unique sequences
-    ref_sequences = set()
-    var_sequences = set()
-    ref_seq_to_name = {}
-
-    # Store unique sequences with metadata for writing
-    ref_entries = []
-    var_entries = []
-    ref_names = []
-    var_names = []
-
-    # Collect unique reference and variant sequences
-    for idx, row in df.iterrows():
-        ref_seq, var_seq = parse_sequences(row["pos"], row["ref"], row["alt"], seq_chr17, window_size)
-
-        # Add to sets to ensure uniqueness
-        if ref_seq not in ref_sequences:
-            ref_sequences.add(ref_seq)
-            ref_name = f"BRCA1_ref_pos_{row['pos']}_{row['ref']}_class_{row['class']}"
-
-            ref_entries.append(f">{ref_name}\n{ref_seq}\n")
-            ref_names.append(ref_name)
-            ref_seq_to_name[ref_seq] = ref_name
-        else:
-            ref_name = ref_seq_to_name[ref_seq]
-            ref_names.append(ref_name)
-
-        if var_seq not in var_sequences:
-            var_sequences.add(var_seq)
-            var_name = f"BRCA1_var_pos_{row['pos']}_{row['ref']}to{row['alt']}_class_{row['class']}"
-
-            var_entries.append(f">{var_name}\n{var_seq}\n")
-            var_names.append(var_name)
-        else:
-            assert False, "Duplicate variant sequence"
-    # Write unique sequences to FASTA files
-    with open(ref_fasta_path, "w") as f:
-        f.writelines(ref_entries)
-    with open(var_fasta_path, "w") as f:
-        f.writelines(var_entries)
-    # Add FASTA names to dataframe
-    df_with_names = df.copy()
-    df_with_names["ref_fasta_name"] = ref_names
-    df_with_names["var_fasta_name"] = var_names
-    print(f"Total unique reference sequences: {len(ref_sequences)}")
-    print(f"Total unique variant sequences: {len(var_sequences)}")
-    return df_with_names
-
-def check_fp8_support():
-    """Check if FP8 is supported on the current GPU.
-    FP8 requires compute capability 8.9+ (Ada Lovelace/Hopper architecture or newer).
-    """
-    if not torch.cuda.is_available():
-        return False, "CUDA not available"
-    device_props = torch.cuda.get_device_properties(0)
-    compute_capability = f"{device_props.major}.{device_props.minor}"
-    device_name = device_props.name
-    # FP8 is supported on compute capability 8.9+ (Ada Lovelace/Hopper architecture)
-    is_supported = (device_props.major > 8) or (device_props.major == 8 and device_props.minor >= 9)
-    return is_supported, f"Device: {device_name}, Compute Capability: {compute_capability}"
 
 ############################################################
 # load input data
 ############################################################
-SAMPLE_CONFIG = {"sample_frac": 0.05, "balanced": True, "disable": False, "random_state": 42}
-
-# 1. Download the necessary data files if not present
-excel_path, genome_path = download_data(DATA_DIR)
-seq_chr17 = load_genome_sequence(genome_path)
 
 # 2. Load and preprocess variant data
 brca1_df = load_brca1_data(excel_path)
@@ -363,464 +195,252 @@ brca1_df = subset_dataframe(brca1_df,SEQ_LENGTH)
 brca1_df.head(2)
 print("Loaded df:", brca1_df.shape)
 
-# 4. Write FASTA files for ref and variant sequences
-brca1_df = generate_fasta_files(brca1_df, seq_chr17, output_dir=OUTPUT_DIR, window_size=WINDOW_SIZE)
-print("OUTPUT_DIR:", OUTPUT_DIR)
 
-############################################################
-# Load Evo2 Checkpoints
-############################################################
-start_time = time.time()
+################################################
+# Input model
+################################################
+from helical.models.evo_2 import Evo2, Evo2Config
+evo2_config = Evo2Config(batch_size=1)  # Configure Evo2
+evo2 = Evo2(configurer=evo2_config)
+evo2.model
 
-if MODEL_SIZE == "1b":
-    from bionemo.core.data.load import load
-    checkpoint_path = load("evo2/1b-8k-bf16:1.0")
+################################################
+# Generate emebeddings framework 
+################################################
+input_sequences = ["ACGT" * 1000]
+
+
+# Hypothetical BRCA1 ref and var sequences (variant T>A at position 8, total 17 nucleotides in length)
+input_sequences = ["ATGCAGGCTTGCCTTCT", "ATGCAGGCATGCCTTCT"]
+
+# Print the number of letters in each string in input_sequences
+for i, seq in enumerate(input_sequences):
+    print(f"Sequence {i + 1}: {len(seq)} letters")
+    
+dataset = evo2.process_data(input_sequences)
+embeddings = evo2.get_embeddings(dataset)
+
+# Print to check 
+for i, seq in enumerate(input_sequences):
+    last_embedding = embeddings["embeddings"][i][embeddings["original_lengths"][i] - 1]
+    print(f"Last embedding for sequence {i + 1}: {last_embedding}")
+    print(f" Dim: {last_embedding.shape}")
+
+# Extract the embeddings for sequence 1 and sequence 2
+embedding_1 = embeddings["embeddings"][0][0]  # Sequence 1 embedding (first and only row in embedding)
+embedding_2 = embeddings["embeddings"][1][0]  # Sequence 2 embedding (first and only row in embedding)
+
+# Ensure embeddings are 1D for comparison
+assert embedding_1.shape == embedding_2.shape, "Embeddings must have the same shape!"
+embedding_1 = embedding_1.flatten()
+embedding_2 = embedding_2.flatten()
+
+################################################
+# save embeddings
+################################################
+
+input_name="BRCA1"
+SEQ_LENGTH="8192"
+out_name = f"{input_name}_seq{SEQ_LENGTH}"
+current_dir = os.getcwd()
+print(f"Current directory: {current_dir}")
+
+# Convert embeddings to NumPy arrays and save
+numpy_embeddings = []
+for i, seq in enumerate(input_sequences):
+    last_embedding = embeddings["embeddings"][i][embeddings["original_lengths"][i] - 1]
+    numpy_embeddings.append(last_embedding)
+    np.save(f"{out_name}_embed.npy", numpy_embeddings)
+# Load the embeddings from the .npy file
+loaded_embeddings = np.load(f"{out_name}_embed.npy", allow_pickle=True)
+print(f"Number of embeddings: {len(loaded_embeddings)}")
+print(f"  loaded_embeddings: {loaded_embeddings.shape}") #  loaded_embeddings: (2, 1, 4096)
+for i, embedding in enumerate(loaded_embeddings):
+    print(f"Embedding {i + 1}:")
+    print(f"  Shape: {embedding.shape}")
+    print(f"  Data:\n{embedding}\n")
+
+region="BRCA1"
+input_file=f"RovHer_{region}.txt"
+chr="17"
+################################################
+# 1. Load reference file
+################################################
+
+ref_file = f"GRCh38_chr{chr}.fasta"
+refseq = str(next(SeqIO.parse(open(ref_file, "rt"), "fasta")).seq)
+print(len(refseq))  # 83257441
+
+################################################
+# 2. Load SNV dataset from local environment
+################################################
+
+# Check if file exists
+data = pd.read_csv(input_file, sep="\t")  # Assuming the file is tab-delimited
+
+# Split the `PLINK_SNP_NAME` column into 4 new columns: chrom, pos, ref, alt
+data[["chrom", "pos", "ref", "alt"]] = data["PLINK_SNP_NAME"].str.split(":", expand=True)
+data["pos"] = data["pos"].astype(int)
+
+# Rename the column LOF_DISRUPTIVE to class
+data.rename(columns={"LOF_DISRUPTIVE": "class"}, inplace=True)
+data["class"] = data["class"].replace({0: "FUNC/INT", 1: "LOF"})
+
+
+# BRCA1 ref seq
+ref = "TTAAACACTTTTCAAACCAGGCAATATTTTAGGCCTACTGTATATTTGCATTTTGAGCTTCCAATACGGATAAGTGACTGGAAAAAGCAGCTAGGTTTAGGTTGAAAAACAACAACCCACCGGGGAACACATTTTAGCAAATTCTTCTGAAAGTCAAAAATGTTATAGTCATAGGTAAAAAGTTACAAAGAACTACCAATTGTCAGAAATAGCTGCCAATATTGACTTAGAAGACAGCAGAAGGAATTTTAGTTCAAGAAACCTAAAACAGGCTGAAAACCTTACCTACCCTATAGCTACCACAAATAACACTGTTTCCAGTCATGATCATTCCTGATCACATATTAAGACATAACTGCAAATTGTGCTATACTGTACTATATTAAAAGGAAGTGAAATATGATCCCTATCCTAGAACTTTCCATACAAATGAATGTAAAACACCATAAAAATTAATCTTAAGGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGTGGGCGGATCACGAGGTCAGGAAGTGGAGACCATCCTGGCTAACACGGTGAAACCCCGTCTCTACTAAAAATACAAAAAATTAGCCGGGCGTGGTGGTGGACGCCTGTAGTCCCAGCTACTTGGGGGGCCGAGGCAGGAGAATGGCGTGAACCCGGGAGGCGGAGCTTGCAGTGAGCCGAGATGGCGCCACTGCACTCCGGCCTGGGTGAAAGAGCGAGACTCCGTCTCAAAAACAAAACAAACAAAAATTAATCTTAAGCCAGGCGCAGTGGCTCACGCCAGCACTTTGGAAGGCCGAGGCGGGTGGATCACGAGATCAGGACTTCAAGACCAGCCTGACCAACGTGATGAAACCCTATCTCTACTAAAAATACAAAATTAGCCGGCCACGGTGGCGTGCGCCTATAATCCCAGCTACTCAGGAGGCTGAGGCAGGAGAAGCGCTTGAACTTGAACCTGGCAGGCGGAGGTTGCAGTGAGCCAAGATGGCGCCACTGCACTCCAGCCTGGGCGACAGAGCCAGACTCCAACCCCCCACCCCGAAAAAAAAAGGTCCAGGCCGGGCGCAGTGGCTCAGGACTGTAATCCCAGCACTTTGGAAGGCTGAGGCGGGTGGATCACAAGGTCAGGAGATCGAGACCATCTTGGCTAACATGGTGAAACCCCGTCTCTACTAAAAATACAAAAAATTAGCCGGGCATAGTGGTGGGCGCCTGTAGTCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATGGCCTGAACCCGGGAGGCGGAGCTGGCAGTGAGCCAAGATCGTGCCACTGCACTCCAGCCTAGGCAGCAGAGCGAGACCGTGTCTCAAAAAAACAAAACAAAACAAAACAAAAAGTCTGGGAGCGGTGGCTCACGCCTGTAATCCCAGCACTTTCGGAGGCCAAGGCAGGAGGATCACCTGAGGTCAGGAGTTCGAGACCAACCTGACCAATATGGAGAAACCCTGTCTCTACTAAAAATACAAAATTAGCTGGTGTGATGGCACATGCCTGCAATCCCAGGTACTCCGGAGGCTGAGGCAGCAGAATTGCTTGAACCCGGGAGGTGGAGGTTGTAGTGAGCCGAGATTGTGCCACTGCACTCCAGCCTGGGCAACAAGAGCCAAAGTCTGTCTCAAAAAAAAAAAAAAAAAAAAAAAAAGAAATTAATCTTAACAGGAAACAGAAAAAAGCAATGAAAAGCTAGAAAACATAATAGTTGATTGAAAATAACAATTTAGCATTTTCATTCTTACATCTTTAATTTTTATGTATCTGAGTTTTTAATTGATGGTTTAATTTGCCAGAATGAGAAAGAACATCCTATTTTTATGACTCTCTCCCATGGAAATGAAACATAAATGTATCCAAATGCCACACTATTGAGGATTTTCCTGATCACTGATTGTCATGAGTAAGTTTTGTGCTTTTTCAAAAGCAGTTTTTTCCTACAATGTCATTTCCTGCTTCTCTGGCTCTGATTTTCAATAAATTGATAAATTGTGAATCCTGTTTTCCTCTTATTTTTGTTTAGCTATAATGTTGAAGGGCAAGGGAGAGGATGGTTATTTATAAATCTTGTATCGCTCTGAAAACACAACATACATTTTCCTTAATCTGATTAACTTGACTTCAAATATGAAAAACAACTTTCATAAAGCAGAAAAGAATTTACCCTTTTTTATTGTGGGTAAGAGGCAATGGTACAACTTTTCAACTTATTTTTTGAATGTTACTCACTACTAACCATCACCATATTTAAAAAAATTAAAGAACTAATTTAGTTTAGTTTATTATTTATTTGACAAATGTTTATTGAGTGGCAACTAGGTCCCAAGTACCGTTCTAACTACTGAACATACAGATGTATGTAAACAAAACAAAAATCCCATCCTGGAGTTTACATTCTGTGGGACTAGAGATAAAAAATGGATACATTACATAGAATGTCAGCTAGTAATCAGTGTTATGGAGAAGCAGCAGGAATAGAAGATAAAGTGTGTGCTGGGGGTGTGGTAATTTTAAATAGGGGTGTCTGGAAATGAAAAGGTGGTATTTCAATCAAGATTTTTAGACCATGGCTGGGTGCAATGGCTCAGGCCTGTAATCCCAGCACCTTGAGAGGCCAAGGGAGGGTAGATCACTTGAGGTCAGGAGTTTGAGACCAGCATGGCCAACATAGCAAAACCCTATCTCTACAACAGAAAAATACAAGAATGGCTGGACGCAGTGGCTTATGCCTGTAATCCTAGCACTTTGGGAGGCCCAGGCGGGTGGATCACAAGGTCAGGAGATCAAGACTATCCTGGCTAACACGGTGAAATCCCGCCTCTACTAAAAAAGAAAAAAAAATACAAAAAATTAGCCGGGCGTGGTAGTGGGTGCTTGTAGTCCCAGCTATTCAGGAGGCTCAGGCAGAAGAATGGCATGAACCCGGGAGGCAGAGTTTGCAGTGAGCTGAGATCGCGCCACTGCACTCCAGCCTGGGCAACAGAGCAAGACTCCATCTCAAAAAAAGAAAAAAAAATACAAAAATTAGCTGGGCATGGTGGTGCACACCTATCGTCCCTGCTACTCTGGAGGCTGAGGTGGGAGGATTGCTTGAGCCTGACGAGGTTGAGGCTGCAGTGAGCTGTGATAGCACCACTGCACTCCAGCCTCTCGACAGAGATCCTATATAAAAAAAAAACCTCTGCATTTCATTGTATGTAAATAAGTATGTAATTTCATTGTATGTACAGAGCCAGTTTCAAACAAAGGTTCTTCCAAATACCTATCCTCTCAACGACACCGATCATCCATGTTTTTTTTTTTTTTTTTTTTTTTTTGAGATGGAGTTTAGCTCTGTCGCTGGAGTTCAGTGGTGCCATATTGGCTCACAGCAACATCTGCCTCCTGGTTCAAGTGATTCTCCTGCCTCAGCCTCCTGAGTAGCTGGGATTACAGGCACATGCCACTACGCCCAGCTAATTTTTGTATTTTTAGTGGAGAGGGGGTTTCACCATGTTGGCCAGGATGGTCTCGATCTCCTGACCTCGTGATCCTACCACCTTGGCCTCCCAAAGTGCTGGGATTACAGGCATAAGCCACCGCCCTCGGCCTCATCCATGATTTTATTTTGCCATTTCAAGTGATGGAGCTTGTTTTAGAGCTGGAAGAAAAGCCAAAATGCCAGTTAATCTAAACTAGATTCCTGCCCCAGTGCAGAACCAATCAAGACAGAGTCCCTGTCTTTCCCGGACCACAGGATTTGTGTTGAAAAGGAGAGGAGTGGGAGAGGCAGAGTGGATGGAGAACAAGGAATCATTTTCTATATTTTTAAAGTTCTTCAGTTAAGAAAATCAGCAATTACAATAGCCTAATCTTACTAGACATGTCTTTTCTTCCCTAGTATGTAAGGTCAATTCTGTTCATTTGCATAGGAGATAATCATAGGAATCCCAAATTAATACACTCTTGTGCTGACTTACCAGATGGGACACTCTAAGATTTTCTGCATAGCATTAATGACATTTTGTACTTCTTCAACGCGAAGAGCAGATAAATCCATTTCTTTCTGTTCCAATGAACTTTAACACATTAGAAAAACATATATATATATCTTTTTAAAAGGTTTATAAAATGACAACTTCATTTTATCATTTTAAAATAAAGTAAATTTAAGATTTGGAAGGTTTTAGAATAATACAAACCAAAGAACTAATGACAACGTCCTTTATTTTTAAAGATTCTAGAAGTTGCTTTTTGTAATTAGACAACATAAATTCTGAATTTTTTCACATATTGCTGCCAACCCCTTGGGTCTTTTCCTTTCTCCAAGAAAGAGAAAGCTACAGAGGAGTGACTGACCGGGTAGGTGGTGGTAGCCTTAGCTTTCTCCAATGTTTCTGGTTGTTTTCTTTTTCTTGCATAAAACCAAAATCAACAACGACCAAACCAACACCAATCAAGGCCTCCCCGCCCCTAACCTTTCCCAGTGACCTGCTCTCATCTCTGGATCCTCCTCAAGCACATCCCTGCCGGCAGCATCTGTTACTACTGACGCTCCTCTACTTCCCTCTTGCGCTTTCTCAATGGCGCAAATGGATCCAGTTCTTAAGTTCTCCCTCCCACAAAATCCTGTCTCCTCCCCTTCCCAGACATATTCCTGGCACCTCTTCTTCCACAAGGTCCCATCCTCTCATACATACCAGCCGGTGTTTTTTGTTTTGTTTTGTTTTGTTTTGTTTTGAGACAGTCTCGCTCTGTCGCCCAGGCTGGAGTGCAATGGCGCGATCTCGGCTCACTGCAACCTCCGCCTCCCGGGTTCTAGCGATTCTCCTGCCTCAGCCTCCTGAGTAGCTGGAGCGGCACCACGCCCGGCTAATTTTTGTATTTTTAGTAGAGACGGAGTTTCACCACGTTGGTCAGGCTGGTCTGGAACTCCTGACCTCATGACCAGCCGACGTTTTTAAAGACATAGTGTCCCCCTCAAGGCATATTCCAGTTCCTATCACGAGGATTCCCCCACGGACACTCAGTGCCCCCTTCCTGATCCTCAGCGCTTCCCTCGCGACCTACAAACTGCCCCCCTCCCCAGGGTTCACAACGCCTTACGCCTCTCAGGTTCCGCCCCTACCCCCCGTCAAAGAATACCCATCTGTCAGCTTCGGAAATCCACTCTCCCACGCCAGTACCCCAGAGCATCACTTGGGCCCCCTGTCCCTTTCCCGGGACTCTACTACCTTTACCCAGAGCAGAGGGTGAAGGCCTCCTGAGCGCAGGGGCCCAGTTATCTGAGAAACCCCACAGCCTGTCCCCCGTCCAGGAAGTCTCAGCGAGCTCACGCCGCGCAGTCGCAGTTTTAATTTATCTGTAATTCCCGCGCTTTTCCGTTGCCACGGAAACCAAGGGGCTACCGCTAAGCAGCAGCCTCTCAGAATACGAAATCAAGGTACAATCAGAGGATGGGAGGGACAGAAAGAGCCAAGCGTCTCTCGGGGCTCTGGATTGGCCACCCAGTCTGCCCCCGGATGACGTAAAAGGAAAGAGACGGAAGAGGAAGAATTCTACCTGAGTTTGCCATAAAGTGCCTGCCCTCTAGCCTCTACTCTTCCAGTTGCGGCTTATTGCATCACAGTAATTGCTGTACGAAGGTCAGAATCGCTACCTATTGTCCAAAGCAGTCGTAAGAAGAGGTCCCAATCCCCCACTCTTTCCGCCCTAATGGAGGTCTCCAGTTTCGGTAAATATAAGTAATAAGGATTGTTGGGGGGGTGGAGGGAAATAATTATTTCCAGCATGCGTTGCGGAATGAAAGGTCTTCGCCACAGTGTTCCTTAGAAACTGTAGTCTTATGGAGAGGAACATCCAATACCAGAGCGGGCACAATTCTCACGGAAATCCAGTGGATAGATTGGAGACCTGTGCGCGCTTGTACTTGTCAACAGTTATGGACTGGAGTGTTATGTTTTCGTATTTTGAAAGCAGAAACTAGGCCTTAAAAAGATACGTACAACTCTTTAGGGAGACTACAATTCCCATCCAGCCCCAGGAGTCTGGGGCAAGTAGTCTTGTAAGGTCAGTGGCCTGCGGGGACGCAGTGAGCGCCGAATTTGCCTGGGGCAGGGGAAATGCGCTCTGGCCCATGTCTGCGCACTCGTAGTTCCACCCCTCAGCCCCAGTGTTTGTTATTTTTCGGGTTCAGCTTGCTTTTGCCCCGTCTCCGTCGACGCAATCGCCACCAGTCAATGGGGTGGTCGTTTTGAGGGACAAGTGGTAAGAGCCAATCTTCTTGGCGAAAACGCGGAGAAACGGGACTAGTTACTGTCTTTGTCCGCCATGTTAGATTCACCCCACAGAGATAGCGGCAGAGCTGGCAGCGGACGGTCTTTGCATTGCCGCCTCCCCAGGGGGCGGGAAGCTGGTAAGGAAGCAGCCTGGGTTAGCTAGGGGTGGGGTCACGTCACACTAAGAGGGTTTGGAGAAGTTCAAGGGAGGAATCCTGCAAAGAAGAGGGGCGACTTTTTCCGTGTCTCCGGACAGCTAATCGTTTTAGTGACAGGATGAGAGAGCCCTTCGTGTTCTGAGGGACCGAGTGGGCGAAAAGCGCCGGAGAGTTGGAGAGTCTGTGGTTCAGAATGCGAGGTGACAACGTGCTAGCAGCCCTCGCTCGCTCTCGGCGCCTCCTCGGCCTTGGCGTCCATTCTGGCCGTGCTGGAGGAGCCCTTCAGCCCGCCACTGCGCTGTGGGGGCCCCTCTCTGGGCTGGCCGAAGCCAGAGCCGGCTCCCTCTGCTTGCGGGGAAGTGTGGAGGGAGAGGCGGGTGTGGGAACTGGGGCTGCGCGCAGCGCTCGCCAGCCAGCGCGAGTTCCAGGTGGGCGCGGGCTCAGCGGGCCCCGCACCCCCGGCCCCGGGCAGTCAGGGGCCTAGCACCCGGGCCAGCAGCTGCAGAGGGTGCGCCGGGTCCCCCAGCACTGCCGGCCCGCCTGCACCCCGCTTGAATTCTCACCGGGCCCCAGCCGCCCTGCACAGGGCAAGGCTCAGGACCTGCAGCCCGCCATGCCCGAGCCCCCTCCCAACCCCTGTGAGCTCCAGCGTGGCCTGAGCCTCCCCGACGGGCACCGCCCCCTGCTCCTCAGCGCCCGGTCCCATCGACTGCCCAAGGGCTGAGAGGAGTGCAGGCGCCCGGCACAGCCCTGCGCAGGATCCACTAGGTGAAGCCAGCTGGGCTCCTGAGTCAGATGGGGACTTGGAAAACTTTTATGTCTAGCCTGAGGATTTTATATGCACCAGTCAGCACTCTGTGTCTAGCTTGGGGTTTGGGGATGCACCAATCAGCACTCTGTATCTAGCTAATCTGGTGGGCACTTGGAGAACTTCTGTGTCTAGCTAAAGGATTGTAAATGCACCAATCAGTGCTCTGTGTCTAGCTCAAGGTTTGCAAATGCACCAATCAGCACTCTGTGTCTAGCTAAAGGTTTGTAAACGCACCAATCAGTGCTCTGTGTCTAGCAAATGTAGTGGGGACTTGGAGAATTTTTATGTCTAGCTAGAGGATTGTAAATGCACCAATCAGCACTCTGTGTATATCTAGCTCAGGGATTGTAAATGCACCAATCAGCACCCTGTCAAAACGGACCAATTAGCTCTCTGTAAAATGGACCAATCAACAGGATGTGGGTGGGGTCAGATAAGGGAATAAAAGCAGGCTGCCCCGCTGGGTGCCAGTGGCTCACACCTGTAATCCCAGCAATTTGGGAGGCCTAGAGGGGTGGATCACGAGGTCAAGAGATCGAGACCATCCTGGCTAACACAGTGAAACCCCGACTCTACTAAAAAGACAAAATATTAGCTGGGTGCGGTGGTGGGTGCCTGTAATCCCCTCTACTGGGGAGGTTGAGGCAGGAGAATGGCGTGAACCCGGGAGGCGGAGCTTGCAGTGAGCCCAGATTGCACCACTGCATTCCAGCCTGGGTGACAGAGGGAGACTCCATCTCAAAAAAAAAAAAAAAAAAAAAAAAAAATGCAGGCTGCCTGAGCCAGCAGCAGCAACCCGCTCTGGTCTCCTTCCACGCTGTGGAAGCTTTGTTCTTGTGCTCTTTGCAATAAATCTTGCTGCTGCTCACTCTTTGGGTCCGCATAGCATTTATCTGCTGGTAACACCGACCGCAGAGGTCTGCAGCTTCA"
+# BRCA1 variant seq
+var = "TTAAACACTTTTCAAACCAGGCAATATTTTAGGCCTACTGTATATTTGCATTTTGAGCTTCCAATACGGATAAGTGACTGGAAAAAGCAGCTAGGTTTAGGTTGAAAAACAACAACCCACCGGGGAACACATTTTAGCAAATTCTTCTGAAAGTCAAAAATGTTATAGTCATAGGTAAAAAGTTACAAAGAACTACCAATTGTCAGAAATAGCTGCCAATATTGACTTAGAAGACAGCAGAAGGAATTTTAGTTCAAGAAACCTAAAACAGGCTGAAAACCTTACCTACCCTATAGCTACCACAAATAACACTGTTTCCAGTCATGATCATTCCTGATCACATATTAAGACATAACTGCAAATTGTGCTATACTGTACTATATTAAAAGGAAGTGAAATATGATCCCTATCCTAGAACTTTCCATACAAATGAATGTAAAACACCATAAAAATTAATCTTAAGGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGGGAGGCCGAGGTGGGCGGATCACGAGGTCAGGAAGTGGAGACCATCCTGGCTAACACGGTGAAACCCCGTCTCTACTAAAAATACAAAAAATTAGCCGGGCGTGGTGGTGGACGCCTGTAGTCCCAGCTACTTGGGGGGCCGAGGCAGGAGAATGGCGTGAACCCGGGAGGCGGAGCTTGCAGTGAGCCGAGATGGCGCCACTGCACTCCGGCCTGGGTGAAAGAGCGAGACTCCGTCTCAAAAACAAAACAAACAAAAATTAATCTTAAGCCAGGCGCAGTGGCTCACGCCAGCACTTTGGAAGGCCGAGGCGGGTGGATCACGAGATCAGGACTTCAAGACCAGCCTGACCAACGTGATGAAACCCTATCTCTACTAAAAATACAAAATTAGCCGGCCACGGTGGCGTGCGCCTATAATCCCAGCTACTCAGGAGGCTGAGGCAGGAGAAGCGCTTGAACTTGAACCTGGCAGGCGGAGGTTGCAGTGAGCCAAGATGGCGCCACTGCACTCCAGCCTGGGCGACAGAGCCAGACTCCAACCCCCCACCCCGAAAAAAAAAGGTCCAGGCCGGGCGCAGTGGCTCAGGACTGTAATCCCAGCACTTTGGAAGGCTGAGGCGGGTGGATCACAAGGTCAGGAGATCGAGACCATCTTGGCTAACATGGTGAAACCCCGTCTCTACTAAAAATACAAAAAATTAGCCGGGCATAGTGGTGGGCGCCTGTAGTCCCAGCTACTCGGGAGGCTGAGGCAGGAGAATGGCCTGAACCCGGGAGGCGGAGCTGGCAGTGAGCCAAGATCGTGCCACTGCACTCCAGCCTAGGCAGCAGAGCGAGACCGTGTCTCAAAAAAACAAAACAAAACAAAACAAAAAGTCTGGGAGCGGTGGCTCACGCCTGTAATCCCAGCACTTTCGGAGGCCAAGGCAGGAGGATCACCTGAGGTCAGGAGTTCGAGACCAACCTGACCAATATGGAGAAACCCTGTCTCTACTAAAAATACAAAATTAGCTGGTGTGATGGCACATGCCTGCAATCCCAGGTACTCCGGAGGCTGAGGCAGCAGAATTGCTTGAACCCGGGAGGTGGAGGTTGTAGTGAGCCGAGATTGTGCCACTGCACTCCAGCCTGGGCAACAAGAGCCAAAGTCTGTCTCAAAAAAAAAAAAAAAAAAAAAAAAAGAAATTAATCTTAACAGGAAACAGAAAAAAGCAATGAAAAGCTAGAAAACATAATAGTTGATTGAAAATAACAATTTAGCATTTTCATTCTTACATCTTTAATTTTTATGTATCTGAGTTTTTAATTGATGGTTTAATTTGCCAGAATGAGAAAGAACATCCTATTTTTATGACTCTCTCCCATGGAAATGAAACATAAATGTATCCAAATGCCACACTATTGAGGATTTTCCTGATCACTGATTGTCATGAGTAAGTTTTGTGCTTTTTCAAAAGCAGTTTTTTCCTACAATGTCATTTCCTGCTTCTCTGGCTCTGATTTTCAATAAATTGATAAATTGTGAATCCTGTTTTCCTCTTATTTTTGTTTAGCTATAATGTTGAAGGGCAAGGGAGAGGATGGTTATTTATAAATCTTGTATCGCTCTGAAAACACAACATACATTTTCCTTAATCTGATTAACTTGACTTCAAATATGAAAAACAACTTTCATAAAGCAGAAAAGAATTTACCCTTTTTTATTGTGGGTAAGAGGCAATGGTACAACTTTTCAACTTATTTTTTGAATGTTACTCACTACTAACCATCACCATATTTAAAAAAATTAAAGAACTAATTTAGTTTAGTTTATTATTTATTTGACAAATGTTTATTGAGTGGCAACTAGGTCCCAAGTACCGTTCTAACTACTGAACATACAGATGTATGTAAACAAAACAAAAATCCCATCCTGGAGTTTACATTCTGTGGGACTAGAGATAAAAAATGGATACATTACATAGAATGTCAGCTAGTAATCAGTGTTATGGAGAAGCAGCAGGAATAGAAGATAAAGTGTGTGCTGGGGGTGTGGTAATTTTAAATAGGGGTGTCTGGAAATGAAAAGGTGGTATTTCAATCAAGATTTTTAGACCATGGCTGGGTGCAATGGCTCAGGCCTGTAATCCCAGCACCTTGAGAGGCCAAGGGAGGGTAGATCACTTGAGGTCAGGAGTTTGAGACCAGCATGGCCAACATAGCAAAACCCTATCTCTACAACAGAAAAATACAAGAATGGCTGGACGCAGTGGCTTATGCCTGTAATCCTAGCACTTTGGGAGGCCCAGGCGGGTGGATCACAAGGTCAGGAGATCAAGACTATCCTGGCTAACACGGTGAAATCCCGCCTCTACTAAAAAAGAAAAAAAAATACAAAAAATTAGCCGGGCGTGGTAGTGGGTGCTTGTAGTCCCAGCTATTCAGGAGGCTCAGGCAGAAGAATGGCATGAACCCGGGAGGCAGAGTTTGCAGTGAGCTGAGATCGCGCCACTGCACTCCAGCCTGGGCAACAGAGCAAGACTCCATCTCAAAAAAAGAAAAAAAAATACAAAAATTAGCTGGGCATGGTGGTGCACACCTATCGTCCCTGCTACTCTGGAGGCTGAGGTGGGAGGATTGCTTGAGCCTGACGAGGTTGAGGCTGCAGTGAGCTGTGATAGCACCACTGCACTCCAGCCTCTCGACAGAGATCCTATATAAAAAAAAAACCTCTGCATTTCATTGTATGTAAATAAGTATGTAATTTCATTGTATGTACAGAGCCAGTTTCAAACAAAGGTTCTTCCAAATACCTATCCTCTCAACGACACCGATCATCCATGTTTTTTTTTTTTTTTTTTTTTTTTTGAGATGGAGTTTAGCTCTGTCGCTGGAGTTCAGTGGTGCCATATTGGCTCACAGCAACATCTGCCTCCTGGTTCAAGTGATTCTCCTGCCTCAGCCTCCTGAGTAGCTGGGATTACAGGCACATGCCACTACGCCCAGCTAATTTTTGTATTTTTAGTGGAGAGGGGGTTTCACCATGTTGGCCAGGATGGTCTCGATCTCCTGACCTCGTGATCCTACCACCTTGGCCTCCCAAAGTGCTGGGATTACAGGCATAAGCCACCGCCCTCGGCCTCATCCATGATTTTATTTTGCCATTTCAAGTGATGGAGCTTGTTTTAGAGCTGGAAGAAAAGCCAAAATGCCAGTTAATCTAAACTAGATTCCTGCCCCAGTGCAGAACCAATCAAGACAGAGTCCCTGTCTTTCCCGGACCACAGGATTTGTGTTGAAAAGGAGAGGAGTGGGAGAGGCAGAGTGGATGGAGAACAAGGAATCATTTTCTATATTTTTAAAGTTCTTCAGTTAAGAAAATCAGCAATTACAATAGCCTAATCTTACTAGACATGTCTTTTCTTCCCTAGTATGTAAGGTCAATTCTGTTCATTTGCATAGGAGATAATCATAGGAATCCCAAATTAATACACTCTTGTGCTGACTTACCAGATGGGACACTCTAAGATTTTCTGCATAGCATTAATGACATTTTGTACTTCTTCAACGCGAAGAGCAGATAAATCCATTTCTTTCTGTTCCAATGAACTCTAACACATTAGAAAAACATATATATATATCTTTTTAAAAGGTTTATAAAATGACAACTTCATTTTATCATTTTAAAATAAAGTAAATTTAAGATTTGGAAGGTTTTAGAATAATACAAACCAAAGAACTAATGACAACGTCCTTTATTTTTAAAGATTCTAGAAGTTGCTTTTTGTAATTAGACAACATAAATTCTGAATTTTTTCACATATTGCTGCCAACCCCTTGGGTCTTTTCCTTTCTCCAAGAAAGAGAAAGCTACAGAGGAGTGACTGACCGGGTAGGTGGTGGTAGCCTTAGCTTTCTCCAATGTTTCTGGTTGTTTTCTTTTTCTTGCATAAAACCAAAATCAACAACGACCAAACCAACACCAATCAAGGCCTCCCCGCCCCTAACCTTTCCCAGTGACCTGCTCTCATCTCTGGATCCTCCTCAAGCACATCCCTGCCGGCAGCATCTGTTACTACTGACGCTCCTCTACTTCCCTCTTGCGCTTTCTCAATGGCGCAAATGGATCCAGTTCTTAAGTTCTCCCTCCCACAAAATCCTGTCTCCTCCCCTTCCCAGACATATTCCTGGCACCTCTTCTTCCACAAGGTCCCATCCTCTCATACATACCAGCCGGTGTTTTTTGTTTTGTTTTGTTTTGTTTTGTTTTGAGACAGTCTCGCTCTGTCGCCCAGGCTGGAGTGCAATGGCGCGATCTCGGCTCACTGCAACCTCCGCCTCCCGGGTTCTAGCGATTCTCCTGCCTCAGCCTCCTGAGTAGCTGGAGCGGCACCACGCCCGGCTAATTTTTGTATTTTTAGTAGAGACGGAGTTTCACCACGTTGGTCAGGCTGGTCTGGAACTCCTGACCTCATGACCAGCCGACGTTTTTAAAGACATAGTGTCCCCCTCAAGGCATATTCCAGTTCCTATCACGAGGATTCCCCCACGGACACTCAGTGCCCCCTTCCTGATCCTCAGCGCTTCCCTCGCGACCTACAAACTGCCCCCCTCCCCAGGGTTCACAACGCCTTACGCCTCTCAGGTTCCGCCCCTACCCCCCGTCAAAGAATACCCATCTGTCAGCTTCGGAAATCCACTCTCCCACGCCAGTACCCCAGAGCATCACTTGGGCCCCCTGTCCCTTTCCCGGGACTCTACTACCTTTACCCAGAGCAGAGGGTGAAGGCCTCCTGAGCGCAGGGGCCCAGTTATCTGAGAAACCCCACAGCCTGTCCCCCGTCCAGGAAGTCTCAGCGAGCTCACGCCGCGCAGTCGCAGTTTTAATTTATCTGTAATTCCCGCGCTTTTCCGTTGCCACGGAAACCAAGGGGCTACCGCTAAGCAGCAGCCTCTCAGAATACGAAATCAAGGTACAATCAGAGGATGGGAGGGACAGAAAGAGCCAAGCGTCTCTCGGGGCTCTGGATTGGCCACCCAGTCTGCCCCCGGATGACGTAAAAGGAAAGAGACGGAAGAGGAAGAATTCTACCTGAGTTTGCCATAAAGTGCCTGCCCTCTAGCCTCTACTCTTCCAGTTGCGGCTTATTGCATCACAGTAATTGCTGTACGAAGGTCAGAATCGCTACCTATTGTCCAAAGCAGTCGTAAGAAGAGGTCCCAATCCCCCACTCTTTCCGCCCTAATGGAGGTCTCCAGTTTCGGTAAATATAAGTAATAAGGATTGTTGGGGGGGTGGAGGGAAATAATTATTTCCAGCATGCGTTGCGGAATGAAAGGTCTTCGCCACAGTGTTCCTTAGAAACTGTAGTCTTATGGAGAGGAACATCCAATACCAGAGCGGGCACAATTCTCACGGAAATCCAGTGGATAGATTGGAGACCTGTGCGCGCTTGTACTTGTCAACAGTTATGGACTGGAGTGTTATGTTTTCGTATTTTGAAAGCAGAAACTAGGCCTTAAAAAGATACGTACAACTCTTTAGGGAGACTACAATTCCCATCCAGCCCCAGGAGTCTGGGGCAAGTAGTCTTGTAAGGTCAGTGGCCTGCGGGGACGCAGTGAGCGCCGAATTTGCCTGGGGCAGGGGAAATGCGCTCTGGCCCATGTCTGCGCACTCGTAGTTCCACCCCTCAGCCCCAGTGTTTGTTATTTTTCGGGTTCAGCTTGCTTTTGCCCCGTCTCCGTCGACGCAATCGCCACCAGTCAATGGGGTGGTCGTTTTGAGGGACAAGTGGTAAGAGCCAATCTTCTTGGCGAAAACGCGGAGAAACGGGACTAGTTACTGTCTTTGTCCGCCATGTTAGATTCACCCCACAGAGATAGCGGCAGAGCTGGCAGCGGACGGTCTTTGCATTGCCGCCTCCCCAGGGGGCGGGAAGCTGGTAAGGAAGCAGCCTGGGTTAGCTAGGGGTGGGGTCACGTCACACTAAGAGGGTTTGGAGAAGTTCAAGGGAGGAATCCTGCAAAGAAGAGGGGCGACTTTTTCCGTGTCTCCGGACAGCTAATCGTTTTAGTGACAGGATGAGAGAGCCCTTCGTGTTCTGAGGGACCGAGTGGGCGAAAAGCGCCGGAGAGTTGGAGAGTCTGTGGTTCAGAATGCGAGGTGACAACGTGCTAGCAGCCCTCGCTCGCTCTCGGCGCCTCCTCGGCCTTGGCGTCCATTCTGGCCGTGCTGGAGGAGCCCTTCAGCCCGCCACTGCGCTGTGGGGGCCCCTCTCTGGGCTGGCCGAAGCCAGAGCCGGCTCCCTCTGCTTGCGGGGAAGTGTGGAGGGAGAGGCGGGTGTGGGAACTGGGGCTGCGCGCAGCGCTCGCCAGCCAGCGCGAGTTCCAGGTGGGCGCGGGCTCAGCGGGCCCCGCACCCCCGGCCCCGGGCAGTCAGGGGCCTAGCACCCGGGCCAGCAGCTGCAGAGGGTGCGCCGGGTCCCCCAGCACTGCCGGCCCGCCTGCACCCCGCTTGAATTCTCACCGGGCCCCAGCCGCCCTGCACAGGGCAAGGCTCAGGACCTGCAGCCCGCCATGCCCGAGCCCCCTCCCAACCCCTGTGAGCTCCAGCGTGGCCTGAGCCTCCCCGACGGGCACCGCCCCCTGCTCCTCAGCGCCCGGTCCCATCGACTGCCCAAGGGCTGAGAGGAGTGCAGGCGCCCGGCACAGCCCTGCGCAGGATCCACTAGGTGAAGCCAGCTGGGCTCCTGAGTCAGATGGGGACTTGGAAAACTTTTATGTCTAGCCTGAGGATTTTATATGCACCAGTCAGCACTCTGTGTCTAGCTTGGGGTTTGGGGATGCACCAATCAGCACTCTGTATCTAGCTAATCTGGTGGGCACTTGGAGAACTTCTGTGTCTAGCTAAAGGATTGTAAATGCACCAATCAGTGCTCTGTGTCTAGCTCAAGGTTTGCAAATGCACCAATCAGCACTCTGTGTCTAGCTAAAGGTTTGTAAACGCACCAATCAGTGCTCTGTGTCTAGCAAATGTAGTGGGGACTTGGAGAATTTTTATGTCTAGCTAGAGGATTGTAAATGCACCAATCAGCACTCTGTGTATATCTAGCTCAGGGATTGTAAATGCACCAATCAGCACCCTGTCAAAACGGACCAATTAGCTCTCTGTAAAATGGACCAATCAACAGGATGTGGGTGGGGTCAGATAAGGGAATAAAAGCAGGCTGCCCCGCTGGGTGCCAGTGGCTCACACCTGTAATCCCAGCAATTTGGGAGGCCTAGAGGGGTGGATCACGAGGTCAAGAGATCGAGACCATCCTGGCTAACACAGTGAAACCCCGACTCTACTAAAAAGACAAAATATTAGCTGGGTGCGGTGGTGGGTGCCTGTAATCCCCTCTACTGGGGAGGTTGAGGCAGGAGAATGGCGTGAACCCGGGAGGCGGAGCTTGCAGTGAGCCCAGATTGCACCACTGCATTCCAGCCTGGGTGACAGAGGGAGACTCCATCTCAAAAAAAAAAAAAAAAAAAAAAAAAAATGCAGGCTGCCTGAGCCAGCAGCAGCAACCCGCTCTGGTCTCCTTCCACGCTGTGGAAGCTTTGTTCTTGTGCTCTTTGCAATAAATCTTGCTGCTGCTCACTCTTTGGGTCCGCATAGCATTTATCTGCTGGTAACACCGACCGCAGAGGTCTGCAGCTTCA"
+input_length = len(var)
+var_pos = int((len(var) / 2) + 1)  # Explicitly cast to integer
+region = "BRCA1"
+# Generate embeddings 
+dataset_ref = evo2.process_data([ref])
+embedding_ref = evo2.get_embeddings(dataset_ref)
+dataset_var = evo2.process_data([var])
+embedding_var = evo2.get_embeddings(dataset_var)
+
+var_pos = 1
+# Refernece embedding at specific variant position
+first_embedding1 = embedding_ref['embeddings'][0]
+print(f"Shape of first embedding: {first_embedding1.shape}")
+selected_ref = first_embedding1[var_pos]
+print(f"Shape: {selected_ref.shape}") # Shape: (4096,)
+
+# variant embedding at specific variant position
+first_embedding = embedding_var['embeddings'][0]
+print(f"Shape of first embedding: {first_embedding.shape}")
+selected_var = first_embedding[var_pos]
+print(f"Shape: {selected_var.shape}") # Shape: (4096,)
+
+# Join both embeddings together; Convert both embeddings to DataFrames
+if selected_ref.shape == selected_var.shape:
+    df1 = pd.DataFrame(selected_ref, columns=["ref_embedding"])
+    df2 = pd.DataFrame(selected_var, columns=["var_embedding"])
+    
+    # Concatenate the DataFrames column-wise
+    final_df = pd.concat([df1, df2], axis=1)
+    final_df["delta_embedding"] = final_df["ref_embedding"] - final_df["var_embedding"]
+    final_df.insert(0, "input_length", input_length)  # Add input_length as the first column
+    final_df.insert(1, "var_pos", var_pos)         # Add var_pos as the second column
+    final_df.insert(2, "region", region)         # Add var_pos as the second column
+    outfile = f"{region}_pos{var_pos}.xlsx"
+    final_df.to_excel(outfile, index=False)
 else:
-    checkpoint_path = Path(f"nemo2_evo2_{MODEL_SIZE}_8k")
-    if not checkpoint_path.exists() or not any(checkpoint_path.iterdir()):
-        subprocess.run(
-            f"evo2_convert_to_nemo2 --model-path hf://arcinstitute/savanna_evo2_{MODEL_SIZE}_base "
-            f"--model-size {MODEL_SIZE} --output-dir nemo2_evo2_{MODEL_SIZE}_8k",
-            shell=True,
-            check=True,
-        )
-    else:
-        print("Checkpoint directory is not empty. Skipping command.")
-# if MODEL_SIZE == "1b":
-#     from bionemo.core.data.load import load
-#     #  This line will download the checkpoint from NGC to your $HOME/.cache/bionemo directory and return the path.
-#     #  To do the same from the command line, use `CHECKPOINT_PATH=$(download_bionemo_data evo2/1b-8k-bf16:1.0)`
-#     checkpoint_path = load("evo2/1b-8k-bf16:1.0")
-# else:
-#     checkpoint_path = Path(f"nemo2_evo2_{MODEL_SIZE}_8k")
-#     # Check if the directory does not exist or is empty
-#     if not checkpoint_path.exists() or not any(checkpoint_path.iterdir()):
-#         !evo2_convert_to_nemo2 --model-path hf://arcinstitute/savanna_evo2_{MODEL_SIZE}_base --model-size {MODEL_SIZE} --output-dir nemo2_evo2_{MODEL_SIZE}_8k
-#     else:
-#         print("Checkpoint directory is not empty. Skipping command.")
-        
-end_time = time.time()
-t1 = end_time - start_time
-print(f"Load model: {t1} s")  
-
-############################################################
-# Socre sequences - ref and variant sequences
-############################################################
-
-start_time = time.time()
-
-# Define output directories for prediction results
-output_dir = Path("brca1_fasta_files")
-output_dir.mkdir(parents=True, exist_ok=True)
-
-# Save reference and variant sequences to FASTA
-ref_fasta_path = output_dir / "brca1_reference_sequences.fasta"
-var_fasta_path = output_dir / "brca1_variant_sequences.fasta"
-predict_ref_dir = output_dir / "reference_predictions"
-predict_var_dir = output_dir / "variant_predictions"
-predict_ref_dir.mkdir(parents=True, exist_ok=True)
-predict_var_dir.mkdir(parents=True, exist_ok=True)
-
-fp8_supported, gpu_info = check_fp8_support()
-print(f"FP8 Support: {fp8_supported}")
-print(gpu_info)
-
-# Note: If FP8 is not supported, you may want to disable it in the model config
-# The Evo2 config has 'use_fp8_input_projections: True' by default
-if FAST_CI_MODE:
-    model_subset_option = "--num-layers 4 --hybrid-override-pattern SDH*"
-else:
-    model_subset_option = ""
-fp8_option = "--fp8" if fp8_supported else ""
-
-# Update predict commands to run on the full dataset
-predict_ref_command = (
-    f"predict_evo2 --fasta {ref_fasta_path} --ckpt-dir {checkpoint_path} "
-    f"--output-dir {predict_ref_dir} --model-size {MODEL_SIZE} --tensor-parallel-size 1  {model_subset_option} "
-    f"--pipeline-model-parallel-size 1 --context-parallel-size 1 --output-log-prob-seqs {fp8_option}"
-)
-predict_var_command = (
-    f"predict_evo2 --fasta {var_fasta_path} --ckpt-dir {checkpoint_path} "
-    f"--output-dir {predict_var_dir} --model-size {MODEL_SIZE} --tensor-parallel-size 1 {model_subset_option} "
-    f"--pipeline-model-parallel-size 1 --context-parallel-size 1 --output-log-prob-seqs {fp8_option}"
-)
-end_time = time.time()
-t2 = end_time - start_time
-print(f"Preparation: {t2} s")  
-
-# Score reference
-start_time = time.time()
-print(f"Scoring reference seq...")
-subprocess.run(predict_ref_command, shell=True, check=True)
-end_time = time.time()
-t3 = end_time - start_time
-print(f"Scoring Reference seq using WINDOW_SIZE = {WINDOW_SIZE} and SEQ_LENGTH = {SEQ_LENGTH}: {t3} s")  
-
-# Score variant
-start_time = time.time()
-print(f"Scoring variant seq...")
-subprocess.run(predict_var_command, shell=True, check=True)
-end_time = time.time()
-t4 = end_time - start_time
-print(f"Scoring Variant seq using WINDOW_SIZE = {WINDOW_SIZE} and SEQ_LENGTH = {SEQ_LENGTH}: {t4} s")  
-
-############################################################
-# calculate delta likelihood scores
-############################################################
-
-start_time = time.time()
-# Find and load prediction files
-ref_pred_files = glob.glob(os.path.join(predict_ref_dir, "predictions__rank_*.pt"))
-var_pred_files = glob.glob(os.path.join(predict_var_dir, "predictions__rank_*.pt"))
-
-# Load sequence ID maps (maps sequence ID -> prediction index)
-with open(os.path.join(predict_ref_dir, "seq_idx_map.json"), "r") as f:
-    ref_seq_idx_map = json.load(f)
-with open(os.path.join(predict_var_dir, "seq_idx_map.json"), "r") as f:
-    var_seq_idx_map = json.load(f)
-
-# Load predictions
-ref_preds = torch.load(ref_pred_files[0])
-var_preds = torch.load(var_pred_files[0])
-
-ref_log_probs = []
-var_log_probs = []
-print("Dimensions of brca1_df:", brca1_df.shape)
-
-for _, row in brca1_df.iterrows():
-    ref_name = row["ref_fasta_name"]
-    var_name = row["var_fasta_name"]
-    ref_log_probs.append(ref_preds["log_probs_seqs"][ref_seq_idx_map[ref_name]].item())
-    var_log_probs.append(var_preds["log_probs_seqs"][var_seq_idx_map[var_name]].item())
-brca1_df["ref_log_probs"] = ref_log_probs
-brca1_df["var_log_probs"] = var_log_probs
-
-# ideally probability of a broken variant is lower than a good one. So a bad var - good ref is negative.
-brca1_df["evo2_delta_score"] = brca1_df["var_log_probs"] - brca1_df["ref_log_probs"]
-brca1_df.head()
-print("Saving brca1_df to current directory:", brca1_df.shape)
-brca1_df.to_excel("./brca1_df.xlsx", index=False)
-
-end_time = time.time()
-t5 = end_time - start_time
-print(f"Delta change: {t5} s") # 0.007634162902832031 seconds
-
-
-####################################################################################
-# Plot
-####################################################################################
-def plot_strip_with_means(df, x_col="evo2_delta_score", class_col="class"):
-    """Creates a strip plot with jittered points and median indicators for each class using Seaborn.
-    Parameters:
-    - df (pd.DataFrame): The input DataFrame containing data.
-    - x_col (str): The column name representing the x-axis values (e.g., evo2_delta_score).
-    - class_col (str): The column name representing the class labels.
-    Returns:
-    - matplotlib Figure: Strip plot with median indicators.
-    """
-    # NVIDIA theme colors
-    NVIDIA_GREEN = "#76B900"
-    BACKGROUND_COLOR = "#F8F8F8"
-    GRID_COLOR = "#DDDDDD"
-    FONT_COLOR = "#333333"
-
-    # Determine order of classes (if not already specified)
-    unique_classes = sorted(df[class_col].unique())
-
-    # Set up the plot with NVIDIA theme
-    plt.figure(figsize=(9, 5), facecolor=BACKGROUND_COLOR)
-    plt.style.use("default")  # Reset to default to avoid any pre-existing style
-
-    # Create strip plot
-    p = sns.stripplot(
-        data=df,
-        x=x_col,
-        y=class_col,
-        hue=class_col,
-        order=unique_classes,
-        palette=[NVIDIA_GREEN, "red"],
-        size=6,
-        jitter=0.3,
-        alpha=0.6,
-    )
-
-    # Add median indicators using boxplot
-    sns.boxplot(
-        showmeans=True,
-        meanline=True,
-        meanprops={"visible": False},
-        medianprops={"color": "black", "ls": "-", "lw": 2},
-        whiskerprops={"visible": False},
-        zorder=10,
-        x=x_col,
-        y=class_col,
-        data=df,
-        order=unique_classes,
-        showfliers=False,
-        showbox=False,
-        showcaps=False,
-        ax=p,
-    )
-    # Customize plot appearance
-    plt.title(
-        "Distribution of Delta Likelihoods Scores\nComparing Evo 2 likelihood scores for different BRCA1 SNV classes",
-        color=FONT_COLOR,
-        fontsize=12,
-        loc="left",
-    )
-    plt.xlabel("Delta Likelihood Score, Evo 2", color=FONT_COLOR)
-    plt.ylabel("BRCA1 SNV Class", color=FONT_COLOR)
-
-    # Customize grid and tick colors
-    plt.grid(color=GRID_COLOR, axis="x", linestyle="--", linewidth=0.5)
-    plt.tick_params(colors=FONT_COLOR)
-
-    # Set background color
-    plt.gca().set_facecolor(BACKGROUND_COLOR)
-    plt.gcf().set_facecolor(BACKGROUND_COLOR)
-
-    plt.tight_layout()
-    # return plt.gcf()
-    file_name = f"win{WINDOW_SIZE}_seq{SEQ_LENGTH}_dot.png"
-    plt.savefig(file_name, dpi=300, bbox_inches="tight")
-    print(f"Dot plot saved to {file_name}")
-plot_strip_with_means(brca1_df, x_col="evo2_delta_score", class_col="class")
-
-
-# Calculate AUROC of zero-shot predictions
-#  class 1 is LOF which is the bad thing. That means we expect this to be more negative.
-y_true = brca1_df["class"] == "LOF"
-auroc = roc_auc_score(y_true, -brca1_df["evo2_delta_score"])
-print(f"Zero-shot prediction AUROC: {auroc:.2}")
-
-def plot_roc_curve(df):
-    """Plots an ROC curve using Seaborn with a light NVIDIA-themed design.
-
-    The function assumes:
-    - `class` column as the true labels (binary, 'LOF' = 1, else 0).
-    - `evo2_delta_score` as the prediction score.
-    Parameters:
-    - df (pd.DataFrame): DataFrame containing `class` and `evo2_delta_score`.
-    Returns:
-    - matplotlib Figure: ROC Curve Visualization.
-    """
-    # NVIDIA theme colors
-    NVIDIA_GREEN = "#76B900"
-    BACKGROUND_COLOR = "#F8F8F8"
-    GRID_COLOR = "#DDDDDD"
-    FONT_COLOR = "#333333"
-
-    # Validate required columns
-    if "class" not in df.columns or "evo2_delta_score" not in df.columns:
-        raise ValueError("DataFrame must contain 'class' and 'evo2_delta_score' columns.")
-
-    # Convert 'class' to binary labels: Assume 'LOF' = 1, anything else = 0
-    y_true = (df["class"] == "LOF").astype(int)
-
-    # Compute ROC curve
-    fpr, tpr, _ = roc_curve(y_true, -df["evo2_delta_score"])  # Negative to align with previous logic
-    roc_auc = auc(fpr, tpr)
-
-    # Set up the plot with NVIDIA theme
-    plt.figure(figsize=(9, 5), facecolor=BACKGROUND_COLOR)
-    plt.style.use("default")  # Reset to default to avoid any pre-existing style
-
-    # Plot ROC curve
-    plt.plot(fpr, tpr, color=NVIDIA_GREEN, lw=3, label=f"ROC curve (AUROC = {roc_auc:.2f})")
-
-    # Plot diagonal reference line for random guessing
-    plt.plot([0, 1], [0, 1], color="gray", lw=2, linestyle="--")
-
-    # Customize plot appearance
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel("False Positive Rate", color=FONT_COLOR, fontsize=12)
-    plt.ylabel("True Positive Rate", color=FONT_COLOR, fontsize=12)
-    plt.title(
-        "Zeroshot ROC Curve\nEvaluating the discriminative performance of Evo 2 predictions",
-        color=FONT_COLOR,
-        fontsize=16,
-        loc="left",
-    )
-
-    # Customize grid and tick colors
-    plt.grid(color=GRID_COLOR, linestyle="--", linewidth=0.5)
-    plt.tick_params(colors=FONT_COLOR)
-    # Set background color
-    plt.gca().set_facecolor(BACKGROUND_COLOR)
-    # Add legend
-    plt.legend(loc="lower right", frameon=True, facecolor=BACKGROUND_COLOR, edgecolor=GRID_COLOR)
-    file_name = f"win{WINDOW_SIZE}_seq{SEQ_LENGTH}_ROC.png"
-    plt.savefig(file_name, dpi=300, bbox_inches="tight")
-    print(f"ROC curve saved to {file_name}")
-plot_roc_curve(brca1_df)
-
-############################################################
-# Append results to metrics.xlsx
-############################################################
-
-# Initialize the metrics file if necessary: creates the file with the correct headers if it doesn't exist.
-metrics_file = initialize_metrics_file()
-
-# Create a new row of results
-new_row = {
-    "MODEL_SIZE": MODEL_SIZE,
-    "SEQ_LENGTH": SEQ_LENGTH,
-    "WINDOW_SIZE": WINDOW_SIZE,
-    "load_model": t1,
-    "model_prep": t2,
-    "score_ref": t3,
-    "score_var": t4,
-    "delta": t5,
-    "AUROC": auroc,
-}
-# Append the row to the metrics file
-append_metrics_row(metrics_file, new_row)
-print(f"Metrics appended to {metrics_file}.")
-
-print(f"Scoring Variant seq using WINDOW_SIZE = {WINDOW_SIZE} and SEQ_LENGTH = {SEQ_LENGTH}")  
-print(f"    t3: {t3} s")  
-print(f"    t4: {t4} s")  
-print(f"    AUROC: {auroc:.2}")
-
-############ 6. Extract Evo2 embeddings ###############
-
-# evo2_model = Evo2('evo2_7b')  
-# sequence_wt="TGTTCCAATGAACTTTAACACATTAGAAAA"
-# sequence_mut="TGTTCCAATGAACTGTAACACATTAGAAAA"
-
-# # Tokenize wildtype sequence
-# input_ids_wt = torch.tensor(
-#     evo2_model.tokenizer.tokenize(sequence_wt),  # Byte-level tokenization
-#     dtype=torch.int,
-# ).unsqueeze(0).to('cuda:0')  # Batch dimension + GPU acceleration
-
-# # Tokenize variant sequence
-# input_ids_mut = torch.tensor(
-#     evo2_model.tokenizer.tokenize(sequence_mut),
-#     dtype=torch.int,
-# ).unsqueeze(0).to('cuda:0')  # Batch dimension + GPU acceleration
-
-# # # Extract embeddings from layer 28's MLP component
-# layer_name = 'blocks.28.mlp.l3' # intermediate layer (part of the model's transformer structure)
-
-# # Extract embeddings for the wildtype sequence
-# outputs_wt, embeddings_wt = evo2_model(
-#     input_ids_wt,
-#     return_embeddings=True,
-#     layer_names=[layer_name]
-# )
-
-# # Extract embeddings for the variant sequence
-# outputs_mut, embeddings_mut = evo2_model(
-#     input_ids_mut,
-#     return_embeddings=True,
-#     layer_names=[layer_name]
-# )
-
-# # Get the embedding tensors
-# embedding_tensor_wt = embeddings_wt[layer_name].squeeze(0).cpu().detach()
-# embedding_tensor_mut = embeddings_mut[layer_name].squeeze(0).cpu().detach()
-
-
-# # Save wildtype embeddings
-# np.save("embedding_wt.npy", embedding_tensor_wt.numpy())
-# torch.save(embedding_tensor_wt, "embedding_wt.pt")
-
-# # Save variant embeddings
-# np.save("embedding_mut.npy", embedding_tensor_mut.numpy())
-# torch.save(embedding_tensor_mut, "embedding_mut.pt")
-
-
-# # Convert embeddings to NumPy arrays
-# embedding_wt_np = embedding_tensor_wt.numpy()
-# embedding_mut_np = embedding_tensor_mut.numpy()
-
-# # Perform PCA on both embeddings
-# pca = PCA(n_components=2)
-# embedding_wt_2d = pca.fit_transform(embedding_wt_np)
-# embedding_mut_2d = pca.transform(embedding_mut_np)  # Use the same PCA transformation
-
-# # Plot both embeddings
-# plt.figure(figsize=(10, 8))
-
-# # Wildtype embeddings
-# plt.scatter(embedding_wt_2d[:, 0], embedding_wt_2d[:, 1], label='Wildtype', c='blue', alpha=0.6)
-
-# # Variant embeddings
-# plt.scatter(embedding_mut_2d[:, 0], embedding_mut_2d[:, 1], label='Variant', c='red', alpha=0.6)
-
-# plt.legend()
-# plt.colorbar(label='Position in sequence')
-# plt.xlabel('PCA Dimension 1')
-# plt.ylabel('PCA Dimension 2')
-# plt.title('Comparison of Wildtype vs Variant Embeddings')
-# plt.show()
-
-
-
-# # Tokenize input DNA sequence (handles any length ≤1M bp)
-# sequence = 'ACGT' # converted into tokens suitable for input
-# input_ids = torch.tensor(
-#     evo2_model.tokenizer.tokenize(sequence),  # Byte-level tokenization
-#     dtype=torch.int,
-# ).unsqueeze(0).to('cuda:0')  # Batch dimension + GPU acceleration
-
-# # Extract embeddings from layer 28's MLP component
-# layer_name = 'blocks.28.mlp.l3' # intermediate layer (part of the model's transformer structure)
-# outputs, embeddings = evo2_model(
-#     input_ids, 
-#     return_embeddings=True,
-#     layer_names=[layer_name]  
-# )
-
-# # Embeddings shape: (batch_size=1, sequence_length=4, hidden_dim=4096)
-# print('Embeddings shape: ', embeddings[layer_name].shape)
-
-# # save as NumPy
-# import numpy as np
-# embedding_tensor = embeddings[layer_name].squeeze(0).cpu().detach() # Extract the embedding tensor
-# np.save("embedding.npy", embedding_tensor.numpy()) # NumPy array ,binary NumPy file format.
-
-# # Save as PyTorch
-# torch.save(embedding_tensor, "embedding.pt") # binary PyTorch tensor format.
-# # Load from NumPy or Tensor file
-# embedding_numpy = np.load("embedding.npy")
-# embedding_tensor = torch.load("embedding.pt")
-# print("Head of PyTorch embedding:\n", embedding_tensor[:5])  # First 5 rows
-# print("Tail of PyTorch embedding:\n", embedding_tensor[-5:])  # Last 5 rows
-
-# # Example: Using embeddings for variant effect prediction
-refseq="TGTTCCAATGAACTTTAACACATTAGAAAA"
-varseq="TGTTCCAATGAACTGTAACACATTAGAAAA"
-# ref_emb = evo2_model(refseq).embeddings[layer_name]
-# var_emb = evo2_model(varseq).embeddings[layer_name]
-
-# # Calculate functional impact score
-# impact_score = cosine_similarity(ref_emb, var_emb)
-
-# # Calculate functional impact score
-# impact_score = cosine_similarity(wildtype_emb, mutant_emb)
-
-# ########### 7. Visualize embeddings (plot) ###########
-# import matplotlib.pyplot as plt
-# from sklearn.decomposition import PCA
-
-# # Extract the embedding tensor (batch, sequence length, embedding dim)
-# embedding_tensor = embeddings[layer_name].squeeze(0).cpu().detach().numpy()
-
-# # Perform PCA to reduce to 2 dimensions
-# pca = PCA(n_components=2)
-# embedding_2d = pca.fit_transform(embedding_tensor)
-
-# # Plot the reduced embedding
-# plt.figure(figsize=(8, 8))
-# plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], c=range(len(embedding_2d)), cmap='viridis')
-# plt.colorbar(label='Position in sequence')
-# plt.xlabel('PCA Dimension 1')
-# plt.ylabel('PCA Dimension 2')
-# plt.title('Visualization of Evo 2 Embedding')
-# plt.show()
-
- # Time: 44.48s | 24.92043113708496 seconds
- # Time: 44.484 s | 25.011 seconds
+    print("Error: The embeddings do not have the same shape.")
+
+
+
+
+
+# Reduce dimensionality for plotting (e.g., average over the sequence dimension)
+ref_embedding_mean = np.mean(ref_embedding, axis=0)
+var_embedding_mean = np.mean(var_embedding, axis=0)
+plt.figure(figsize=(10, 6))
+plt.plot(ref_embedding_mean, label="Reference Sequence", linestyle="--", marker="o")
+plt.plot(var_embedding_mean, label="Variant Sequence", linestyle="--", marker="x")
+plt.title("Comparison of Embeddings")
+plt.xlabel("Embedding Dimension")
+plt.ylabel("Embedding Value")
+plt.legend()
+plt.show()
+plt.savefig("embedding_comparison.png", dpi=300, bbox_inches="tight")  # Save with high resolution
+
+# NEW
+
+import pandas as pd
+import numpy as np
+
+# Example embedding arrays (replace these with your actual embeddings)
+# Assuming embeddings are 1D NumPy arrays of length 8192
+ref_embedding = embedding_ref["embeddings"][0]  # Replace with actual reference embedding
+var_embedding = embedding_var["embeddings"][0]  # Replace with actual variant embedding
+
+
+# Print embeddings
+for i, seq in enumerate(ref_embedding):
+    last_embedding = ref_embedding["embeddings"][i][ref_embedding["original_lengths"][i] - 1]
+    print(f"Last embedding for sequence {i + 1}: {last_embedding}")
+    print(f" Dim: {last_embedding.shape}")
+
+# Get the total number of sequences
+num_sequences = len(var_embedding)
+print(f"Total number of nucleotides: {num_sequences}")
+assert len(ref_embedding) == len(var_embedding), "Embeddings must have the same length!"
+
+# Initialize a list to store results
+results = []
+# Compare reference and variant embeddings at each position
+for i in range(len(ref_embedding)):
+    ref_value = ref_embedding[i]
+    var_value = var_embedding[i]
+    
+    # Append values to results
+    results.append({
+        "Position": i + 1,  # 1-based position
+        "Reference embedding value": ref_value,
+        "Variant embedding value": var_value
+    })
+# Convert results to a DataFrame
+results_df = pd.DataFrame(results)
+print(f"Results DataFrame created with {len(results_df)} rows.")
+results_df.to_csv(f"BRCA1_embed_diff.csv", index=False)
+print("Results saved to 'BRCA1_embed_diff.csv'.")
+
+################################################
+# 4. Loop Through Subsets of Input Sequences
+################################################
+
+# Define the sequence and subset lengths
+input_sequence = "ACGTTTATCGTA" * 5000  # Length = 60,000
+subset_lengths = [100, 200, 300, 400, 500, 600, 1000, 2000, 3000, 4000,5000,60000]  # Different lengths to test
+
+results = []
+for length in subset_lengths:
+    subset_sequence = input_sequence[:length]  # Take the first `length` nucleotides
+    start_time = time.time()
+    dataset_subset = evo2.process_data([subset_sequence])  # Process data
+    embeddings_subset = evo2.get_embeddings(dataset_subset)  # Get embeddings
+    end_time = time.time()
+    
+    # embedding dimensions
+    embedding_dim = embeddings_subset["embeddings"][0].shape  # Access shape directly
+    results.append({
+        "Length": length,
+        "Embedding Dimension": embedding_dim,
+        "Time (s)": end_time - start_time
+    })
+
+# Save results into a DataFrame
+results_df = pd.DataFrame(results)
+print(results_df)
+results_df.to_excel("/workspace/embedding_runtime.xlsx", index=False)
+
+# print current directory   
+print(f"Current directory: {os.getcwd()}")
+
+# print all files in the current directory
+print("Files in current directory:")
+for file in os.listdir("."):
+    print(file)
+
+# bash
+docker exec -it a643f0fcee3b ls /workspace
+docker cp a643f0fcee3b:/workspace/embedding_runtime.xlsx /tmp/embedding_runtime.xlsx
+docker cp /tmp/embedding_runtime.xlsx c3b18d465a12:/root/verb-workspace/embedding_runtime.xlsx
+
+
+################################################
+# Example Usage For Sequence Generation
+################################################
+
+from helical.models.evo_2 import Evo2, Evo2Config
+evo2_config = Evo2Config(batch_size=1)
+evo2 = Evo2(configurer=evo2_config)
+sequences = ["ACGT" * 1000]
+dataset = evo2.process_data(data)
+generate = evo2.generate(dataset)
+print(generate)
+
+
+

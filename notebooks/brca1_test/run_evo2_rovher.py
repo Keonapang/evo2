@@ -26,6 +26,7 @@ from pathlib import Path
 import time
 import subprocess
 import warnings
+import argparse
 warnings.simplefilter("ignore", FutureWarning)
 
 import matplotlib.pyplot as plt
@@ -36,9 +37,9 @@ from Bio import SeqIO
 from sklearn.metrics import auc, roc_auc_score, roc_curve
 FAST_CI_MODE: bool = os.environ.get("FAST_CI_MODE", False)
 
-######################### ######################## ########################
-# Load arguments
-import argparse
+########################################################################
+#  Load arguments
+########################################################################
 parser = argparse.ArgumentParser(description="Evo2 pilot study")
 parser.add_argument("--SEQ_LENGTH", type=int, required=True, default=100, help="SEQ_LENGTH")
 parser.add_argument("--WINDOW_SIZE", type=int, required=True, default=4096, help="Window size")
@@ -54,23 +55,32 @@ WINDOW_SIZE = args.WINDOW_SIZE
 MODEL_SIZE = args.MODEL_SIZE
 input_file = args.INPUT_FILE
 chr = args.REF_CHR
-subset_method=args.SUBSET_METHOD # balanced or random; bottom or top 
+subset_method=args.SUBSET_METHOD # balanced or random; bottom or top; row 
+input_name = os.path.splitext(input_file)[0] # Remove the file extension
+
+# MODIFY ONLY IF SUBET_METHOD == "row":
+row_num = 21  # row number to extract (i.e. 10th row)
+
+print(f"run_evo2_rovher.py -SEQ_LENGTH {SEQ_LENGTH}  -WINDOW_SIZE {WINDOW_SIZE}  -MODEL_SIZE {MODEL_SIZE}")
+print(f"                   -input_file {input_file}  -chr {chr}  -subset_method {subset_method}")
 
 ########################################################################
 # Define functions 
 ########################################################################
 # Initialize the metrics files if they don't already exist
 def initialize_metrics_file():
+    """
+    Initializes the metrics files (.xlsx and .csv), adds the updated columns to the metrics files.
+    """
     metrics_xlsx = Path("metrics.xlsx")
     metrics_csv = Path("metrics.csv")
+    columns = [
+        "MODEL_SIZE", "input_file", "subset_method", "SEQ_LENGTH", "WINDOW_SIZE", 
+        "load_model", "model_prep", "score_ref", "score_var", "delta", "AUROC"
+    ]
+    # Create new metrics files if they don't exist
     if not metrics_xlsx.exists() or not metrics_csv.exists():
-        columns = [
-            "MODEL_SIZE", "SEQ_LENGTH", "WINDOW_SIZE", 
-            "load_model", "model_prep", "score_ref", "score_var", "delta", "AUROC"
-        ]
         df = pd.DataFrame(columns=columns)
-        
-        # Write to both .xlsx and .csv files
         if not metrics_xlsx.exists():
             df.to_excel(metrics_xlsx, index=False)
         if not metrics_csv.exists():
@@ -79,11 +89,17 @@ def initialize_metrics_file():
 
 # Append results to both .xlsx and .csv files
 def append_metrics_row(metrics_files, row_data):
+    """
+    Appends a row of data to the metrics files (.xlsx and .csv).
+    Ensures the new columns are included in the metrics files.
+    """
     metrics_xlsx, metrics_csv = metrics_files
+    
     # Update the .xlsx file
     df_xlsx = pd.read_excel(metrics_xlsx)
     df_xlsx = pd.concat([df_xlsx, pd.DataFrame([row_data])], ignore_index=True)
     df_xlsx.to_excel(metrics_xlsx, index=False)
+    
     # Update the .csv file
     df_csv = pd.read_csv(metrics_csv)
     df_csv = pd.concat([df_csv, pd.DataFrame([row_data])], ignore_index=True)
@@ -152,20 +168,12 @@ def subset_dataframe(df, seq):
 
 def subset_top_bottom(data, subset_method, SEQ_LENGTH):
     """
-    Extracts a subset of rows from the data based on the subset_method and SEQ_LENGTH.
-    
-    Parameters:
-    - data (pd.DataFrame): The input data table with a 'yhat' column.
-    - subset_method (str): Either "top" or "bottom".
-        - "top": Extract the top SEQ_LENGTH rows with the smallest yhat values.
-        - "bottom": Extract the bottom SEQ_LENGTH rows with the largest yhat values.
-    - SEQ_LENGTH (int): The number of rows to extract.
-
+    Sorts data in descending order, tplink_snp_namehen extracts rows based on the subset_method and SEQ_LENGTH.
     Returns:
-    - pd.DataFrame: The subsetted data.
+        - pd.DataFrame: subsetted data.
     """
-    # Sort data by the 'yhat' column in ascending order
-    sorted_data = data.sort_values(by="yhat", ascending=True)
+    # Sort data by the 'yhat' column in DESCEDNING order
+    sorted_data = data.sort_values(by="yhat", ascending=False)
     
     # Extract rows based on the subset_method
     if subset_method == "top":
@@ -177,9 +185,30 @@ def subset_top_bottom(data, subset_method, SEQ_LENGTH):
     
     return subset
 
-# Example Usage
-# subset_data(data, "top", 100)  # Extract the top 100 rows with the smallest yhat values
-# subset_data(data, "bottom", 100)  # Extract the bottom 100 rows with the largest yhat values
+def extract_row_by_number(df, row_num):
+    """
+    Extracts a specific row from the dataframe based on the provided row number (1-indexed).
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        The input dataframe from which to extract the row.
+    row_num : int
+        The row number to extract (1-indexed).
+    Returns:
+    --------
+    pandas.DataFrame
+        A dataframe containing only the specified row.
+    Raises:
+    -------
+    ValueError:
+        If `row_num` is less than 1 or greater than the number of rows in the dataframe.
+    """
+    import pandas as pd
+    if row_num < 1 or row_num > len(df):
+        raise ValueError(f"ROW_NUM ({row_num}) is out of bounds for the dataframe with {len(df)} rows.")
+    # Extract the specific row (convert 1-indexed to 0-indexed)
+    extracted_row = df.iloc[[row_num - 1]]
+    return extracted_row
 
 def parse_sequences(pos, ref, alt, refseq, window_size=WINDOW_SIZE):
     """Parse reference and variant sequences from the reference genome sequence.
@@ -350,8 +379,9 @@ data.head(5)
 print("Dimensions of data:", data.shape)
 
 if subset_method == "balanced":
-    brca1_df = sample_data(
-    brca1_df,
+    SAMPLE_CONFIG = {"sample_frac": 0.05, "balanced": True, "disable": False, "random_state": 42}
+    data = sample_data(
+    data,
     sample_frac=SAMPLE_CONFIG["sample_frac"],
     balanced=SAMPLE_CONFIG["balanced"],
     disable=SAMPLE_CONFIG["disable"],
@@ -363,6 +393,8 @@ if subset_method == "top":
     data = subset_top_bottom(data, "top", SEQ_LENGTH)
 if subset_method == "bottom":
     data = subset_top_bottom(data, "bottom", SEQ_LENGTH)
+if subset_method == "row":
+    data = extract_row_by_number(data, row_num)
 
 
 ############################################################
@@ -491,7 +523,11 @@ data["evo2_delta_score"] = data["var_log_probs"] - data["ref_log_probs"]
 data.head()
 print("Saving data to current directory:", data.shape)
 
-excel_file=f"{input_file}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}.xlsx"
+if subset_method == "row":
+    excel_file = f"{input_name}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}{row_num}.xlsx"
+else:
+    excel_file = f"{input_name}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}.xlsx"
+
 data.to_excel(excel_file, index=False)
 
 end_time = time.time()
@@ -573,8 +609,13 @@ def plot_strip_with_means(df, x_col="evo2_delta_score", class_col="class"):
     plt.gcf().set_facecolor(BACKGROUND_COLOR)
 
     plt.tight_layout()
-    # return plt.gcf()
-    file_name = f"{input_file}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}_dot.png"
+
+    file_name = f"{input_name}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}_dot.png"
+    if subset_method == "row":
+        file_name = f"{input_name}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}{row_num}_dot.png"
+    else:
+        file_name = f"{input_name}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}_dot.png"
+
     plt.savefig(file_name, dpi=300, bbox_inches="tight")
     print(f"Dot plot saved to {file_name}")
 plot_strip_with_means(data, x_col="evo2_delta_score", class_col="class")
@@ -643,21 +684,26 @@ def plot_roc_curve(df):
     plt.gca().set_facecolor(BACKGROUND_COLOR)
     # Add legend
     plt.legend(loc="lower right", frameon=True, facecolor=BACKGROUND_COLOR, edgecolor=GRID_COLOR)
-    file_name = f"{input_file}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}_ROC.png"
+
+    if subset_method == "row":
+        file_name = f"{input_name}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}{row_num}_ROC.png"
+    else:
+        file_name = f"{input_name}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}_ROC.png"
     plt.savefig(file_name, dpi=300, bbox_inches="tight")
-    print(f"ROC curve saved to {file_name}")
+
 plot_roc_curve(data)
 
 ############################################################
 # Append results to metrics.xlsx
 ############################################################
 
-# Initialize the metrics file if necessary: creates the file with the correct headers if it doesn't exist.
 metrics_file = initialize_metrics_file()
 
 # Create a new row of results
 new_row = {
     "MODEL_SIZE": MODEL_SIZE,
+    "input_file": input_file,
+    "subset_method": subset_method,
     "SEQ_LENGTH": SEQ_LENGTH,
     "WINDOW_SIZE": WINDOW_SIZE,
     "load_model": t1,
@@ -670,11 +716,11 @@ new_row = {
 # Append the row to the metrics file
 append_metrics_row(metrics_file, new_row)
 print(f"Metrics appended to {metrics_file}.")
-
 print(f"Scoring Variant seq using WINDOW_SIZE = {WINDOW_SIZE} and SEQ_LENGTH = {SEQ_LENGTH}")  
-print(f"    t3: {t3} s")  
-print(f"    t4: {t4} s")  
-print(f"    AUROC: {auroc:.2}")
+print(f"  t3: {t3} s    t4: {t4} s      AUROC: {auroc:.2}")
+print(f"   ")
+print(f"   ")
+
 
 ############ 6. Extract Evo2 embeddings ###############
 
