@@ -2,15 +2,19 @@
 # Train a neural network for supervised classification of BRCA1 variants using Evo2 embedding
 
 # REGION="RovHer_BRCA1" # BRCA1_DATA, RovHer_BRCA1 or RovHer_LDLR, "both" (BRCA1 + LDLR RVs)
-# y_label="class" # clinvar (0, 0.25, 0.5, 0.75,1); class (LOF, FUNC/INT)
-# COMBO="refvar" # delta, refvar
-# LAYER="blocks.28.mlp.l3"
+# y_labels=("class") # "clinvar" "class"
+# COMBOS=("refvar") # delta, refvar
+# LAYER="blocks.28.mlp.l3" # fixed
 
+# for y_label in "${y_labels[@]}"; do
+# for COMBO in "${COMBOS[@]}"; do
 # python3.11 "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/NN/BRCA1-Simulation6.py" \
 # --REGION $REGION \
 # --LAYER $LAYER \
 # --COMBO $COMBO \
 # --Y_LABEL $y_label
+# done
+# done
 
 ##############################################################################################
 import sys
@@ -244,16 +248,6 @@ else:
         data["clinvar"] = data["clinvar"].apply(recode_clinvar)
         print(data["clinvar"].value_counts(dropna=False))
 
-# na_count = data[y_label].isna().sum()
-# print(f"Number of NA values in {y_label} column: {na_count}\n")
-# if na_count > 0:
-#     data = data.dropna(subset=[y_label])
-#     print("After removing NA:", data.shape)
-
-# if y_label == "clinvar":
-#     data = data[data['clinvar'] != "NA"]
-#     print("After removing NA in clinvar:", data.shape)
-#     NROWS=data.shape[0]
 
 #######################################################
 # Load embeddings
@@ -285,7 +279,6 @@ if COMBO == "refvar":
         var_reverse = pd.concat([var_reverse1, var_reverse2], ignore_index=True)
         ref = pd.concat([ref1, ref2], ignore_index=True)
         ref_reverse = pd.concat([ref_reverse1, ref_reverse2], ignore_index=True)
-
 
 #######################################################
 # Subset rows
@@ -398,7 +391,7 @@ if y_label == "clinvar":
     VUS_count = data[data["clinvar"] == 0.5].shape[0]
     LB_count = data[data["clinvar"] == 0.25].shape[0]
     B_count = data[data["clinvar"] == 0].shape[0]
-    print(f"'P': {lof_count}  'LP': {LP_count} 'VUS': {VUS_count} 'LB': {LB_count} 'B': {B_count} \n")
+    print(f"'P': {P_count}  'LP': {LP_count} 'VUS': {VUS_count} 'LB': {LB_count} 'B': {B_count} \n")
 
 print(f"-------------------------------------\n")
 
@@ -532,6 +525,9 @@ else:
     fpr_test, tpr_test, thresholds_test = roc_curve(y_test, y_test_pred_prob)
     fpr_val, tpr_val, thresholds_val = roc_curve(y_val, y_val_pred_prob)
 
+print(f"AUC (Test): {auc_test:.4f}  (Validation): {auc_val:.4f}")
+print("Results in:", f"{OUTPUT_DIR}\n")
+
 #######################################################
 # Plotting: train loss/AUC
 #######################################################
@@ -559,30 +555,33 @@ plt.savefig(plot1)
 #######################################################
 # ROC
 #######################################################
+FONT_COLOR = "#333333"
+NVIDIA_GREEN = "#76B900"
+GRID_COLOR = "#DDDDDD"
+BACKGROUND_COLOR = "#F8F8F8"
 
-plt.figure(figsize=(8, 6))
-
+plt.figure(figsize=(8, 6),facecolor=BACKGROUND_COLOR)
+plt.style.use("default")
 # Test set
-plt.plot(fpr_test, tpr_test, label=f"Test Set AUC = {auc_test:.4f}", color="blue", linewidth=2)
+plt.plot(fpr_test, tpr_test, label=f"Test AUC = {auc_test:.3f}", color="blue", linewidth=2.5)
 
 # Validation set
-plt.plot(fpr_val, tpr_val, label=f"Validation Set AUC = {auc_val:.4f}", color="green", linewidth=2)
+plt.plot(fpr_val, tpr_val, label=f"Validation AUC = {auc_val:.3f}", color=NVIDIA_GREEN, linewidth=2.5)
 
 # Random guess line
-plt.plot([0, 1], [0, 1], 'k--', label="Random Guess", color="gray", linewidth=1.5)
+plt.plot([0, 1], [0, 1], color="gray", lw=2, linestyle="--")
 
-plt.xlabel("False Positive Rate", fontsize=12)
-plt.ylabel("True Positive Rate", fontsize=12)
-plt.title(f"ROC Curve for {y_label}", fontsize=14)
+plt.xlabel("False Positive Rate", color=FONT_COLOR, fontsize=12)
+plt.ylabel("True Positive Rate", color=FONT_COLOR, fontsize=12)
+plt.title(f"ROC Curve for {y_label}", color=FONT_COLOR, fontsize=16)
 plt.legend(loc="lower right", fontsize=10)
+plt.legend(loc="lower right", frameon=True, fontsize=10, facecolor=BACKGROUND_COLOR, edgecolor=GRID_COLOR)
 
 # Grid and layout adjustments
-plt.grid(alpha=0.3)
+plt.grid(alpha=0.3, color=GRID_COLOR, linestyle="--", linewidth=0.5)
+plt.tick_params(colors=FONT_COLOR)
 plt.tight_layout()
 
-plt.savefig(f"{OUTPUT_DIR}/{REGION}_{LAYER}_ROC.png")
+plt.savefig(plot2)
 plt.show()
-print(f"AUC (Test): {auc_test:.4f}  (Validation): {auc_val:.4f}")
-
-print("Results in:", f"{OUTPUT_DIR}\n")
 

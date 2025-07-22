@@ -704,8 +704,8 @@ print(f"Metrics appended to {metrics_file}.\n\n")
 #     # Customize plot appearance
 #     plt.xlim([0.0, 1.0])
 #     plt.ylim([0.0, 1.05])
-#     plt.xlabel("False Positive Rate", color=FONT_COLOR, fontsize=12)
-#     plt.ylabel("True Positive Rate", color=FONT_COLOR, fontsize=12)
+    # plt.xlabel("False Positive Rate", color=FONT_COLOR, fontsize=12)
+    # plt.ylabel("True Positive Rate", color=FONT_COLOR, fontsize=12)
 #     plt.title(
 #         "Zeroshot ROC Curve\nEvaluating the discriminative performance of Evo 2 predictions",
 #         color=FONT_COLOR,
