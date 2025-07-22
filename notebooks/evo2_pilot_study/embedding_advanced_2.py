@@ -60,6 +60,8 @@ parser.add_argument("--INPUT_FILE", type=str, required=True, help="input_file")
 parser.add_argument("--LAYER", required=True,type=str, help="embedding layer")
 parser.add_argument("--VAR_WIN", required=True,type=str, help="how many variant embeddings to extract")
 parser.add_argument("--REF_CHR", type=str, help="ref chromosome")
+parser.add_argument("--REV", type=str, help="yes or no (generate reverse complement embeddings?)")
+
 # parser.add_argument("--SUBSET_METHOD", type=str, help="SUBSET_METHOD")
 # parser.add_argument("--SEQ_LENGTH", type=int, required=True, default=100, help="SEQ_LENGTH")
 
@@ -70,7 +72,8 @@ input_file = args.INPUT_FILE
 chr = args.REF_CHR
 VAR_WIN = args.VAR_WIN # 1 or 0
 LAYER = args.LAYER # could be none 
-rev="yes" # yes or no (generate reverse complement embeddings?)
+REV = args.REV # reverse complement embeddings
+REV="yes" # yes or no (generate reverse complement embeddings?)
 # subset_method=args.SUBSET_METHOD # balanced or random; bottom or top; row 
 # SEQ_LENGTH = args.SEQ_LENGTH # this is row_num if subset_method is row
 
@@ -330,7 +333,7 @@ if VAR_WIN == "1":
         print(f" ")
 
         # If yes, generate the var + ref reverse complement embeddings
-        if rev =="yes":
+        if REV =="yes":
                 ref_reverse = get_reverse_complement(ref)
                 var_reverse = get_reverse_complement(var)
                 print(f"ref: {ref[:5]}...  ref_reverse: {ref_reverse[:5]}...") 

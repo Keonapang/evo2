@@ -37,7 +37,7 @@ nv=0.1
 AF=0.00003
 cores=10
 anno_cols="yes"
-embedding_col="no" # FIXED
+embedding_col="delta" # FIXED
 blks="28" # (not accounted for if embedding_col="no")
 script_path="/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/MARS"
 

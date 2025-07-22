@@ -39,7 +39,7 @@ np <- as.numeric(args[3]) # 11, 13, 14
 nv <- as.numeric(args[4]) # 0.1
 trial_name <- args[5] # "A", "B", "C"
 anno <- args[6] # "yes", "no"
-embedding_col <- as.character(args[7]) # | "delta" (delta embeddings), "no" (no embeddings), "refvar" (ref + var embeddings)
+embedding_col <- as.character(args[7]) # "delta" , "no" (no embeddings), "refvar"
 blk <- as.character(args[8])
 cores <- as.numeric(args[9]) # "yes", "no"
 date <- format(Sys.Date(), "%Y%m%d")
@@ -49,10 +49,10 @@ registerDoParallel(makeCluster(cores))
 # AF <- 0 # Lower bound MAF threshold
 # d <- 3
 # np <- 2000
-# nv <- 0
-# trial_name <- "Chr17" # "A", "B", "C", "D", "E"
+# nv <- 0.1
+# trial_name <- "chr17" # "A", "B", "C", "D", "E"
 # anno <- "yes" # "yes", "no"
-# embedding_col <- "no"
+# embedding_col <- "yes"
 # blk <- "28" # "28", "29", "30", "31", "32", "33", "34", "35"
 # cores <- 30 # Number of cores to use for parallel processing
 # date <- 20250717
@@ -76,7 +76,7 @@ if (embedding_col == "delta" || embedding_col == "refvar") {
 } else if (embedding_col == "no") {
     model_name <- paste0(trial_name, "_MARS_d",d,"_np",np,"_nv", nv,"_lowerAF",AF,"_anno", anno, "_embed", embedding_col) 
 } else {
-    stop("Invalid 'embedding_col'. Must be either: delta, refvar, no")
+    stop("Invalid 'embedding_col'. Must be either: delta, refvar, no, yes")
 }
 cat("\nModel name: ", model_name, "\n\n")
 
@@ -84,6 +84,7 @@ cat("\nModel name: ", model_name, "\n\n")
 server <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk"
 dir <- paste0(server,"/Training/height_FDR/GENEBASS_RV_train_RV_pred_Oct10") # old folder (no cross validation): allvar_predict_saved_models_NO_GENESETS 
 DIR_SCORES <- paste0(server,"/evo2/June30")
+DIR_EMBEDDING <- paste0(server,"/evo2/July20_embedding")
 
 # Output directory
 ROOTDIR <- paste0(server,"/evo2/MARS/",date, "_", embedding_col) # <------ MODIFY!
@@ -109,20 +110,51 @@ predict_path <- train_path
 # Evo2 scores
 file_score <- paste0(DIR_SCORES, "/evo2_chr17_win4096.txt")
 
+# Evo2 embeddings
+file_delta <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_blocks.", blk, ".mlp.l3_delta.csv")
+file_var <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_blocks.", blk, ".mlp.l3_var.csv")
+file_ref <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_blocks.", blk, ".mlp.l3_ref.csv")
+
+# all_data <- rbindlist(
+#   lapply(1:6, function(i) {
+#     file_embed <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_", i, "_blocks.", blk, ".mlp.l3_delta.csv")
+#         fread(file_embed)}),use.names = TRUE,fill = TRUE)
+# output_file <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_blocks.", blk, ".mlp.l3_delta.csv")
+# fwrite(all_data, output_file)
+# cat("All files have been combined and saved to:", output_file, "\n")
+
 ####################################################################################
-# Load training matrix
+# Load input data
 ####################################################################################
 train_df <- as.data.frame(fread(train_path, header = TRUE))
-cat("train_df: ", dim(train_df)[1], "RVs x", dim(df)[2], "cols\n\n") # 'df' of size 3 million x 97 cols
+cat("train_df: ", dim(train_df)[1], "RVs x", dim(df)[2], "cols\n\n")
 
 # Load Evo2 scores
 evo2_scores <- as.data.frame(fread(file_score, header = TRUE, 
                             select = c("PLINK_SNP_NAME", "evo2_delta_score"),
                             showProgress = FALSE))
-train_df <- merge(train_df, evo2_scores, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+
+# Load embeddings
+
+if (embedding_col == "delta") {
+  delta_embed <- fread(file_delta)
+  delta_embed <- delta_embed %>% select(-layer, -input_file, -RovHer_score)
+  cat("delta_embed: ", dim(delta_embed)[1], "RVs x", dim(delta_embed)[2], "cols\n\n")
+} else if (embedding_col == "refvar") {
+  var_embed <- fread(file_var)
+  ref_embed <- fread(file_ref)
+  var_embed <- var_embed %>% select(-layer, -input_file, -RovHer_score)
+  ref_embed <- ref_embed %>% select(-layer, -input_file, -RovHer_score)
+  cat("var_embed: ", dim(var_embed)[1], "RVs x", dim(var_embed)[2], "cols\n\n")
+  cat("ref_embed: ", dim(ref_embed)[1], "RVs x", dim(ref_embed)[2], "cols\n\n")
+
+  if (nrow(var_embed) != nrow(ref_embed)) {
+      stop("Number of rows in delta, var, and ref embeddings do not match.")
+  }
+}
 
 ####################################################################################
-# Filter training matrix
+# Build training matrix
 ####################################################################################
 
 # Keep only certain chromosomes RVs
@@ -130,6 +162,31 @@ train_df <- train_df %>% filter(grepl("^17:", PLINK_SNP_NAME))
 cat("train_df Chr 17-only: ", dim(train_df)[1], "RVs x", dim(df)[2], "cols\n\n") # 'df' of size 3 million x 97 cols
 colnames(train_df)
 cat("\n")
+
+# merge Evo2 scores
+train_df <- merge(train_df, evo2_scores, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+
+# merge embeddings
+if (embedding_col == "delta") {
+  train_df <- merge(train_df, delta_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+} else if (embedding_col == "refvar") {
+  colnames(var_embed) <-ifelse(grepl("^e", colnames(var_embed)), 
+                            paste0(colnames(var_embed), "_var"), 
+                            colnames(var_embed))
+  colnames(ref_embed) <-ifelse(grepl("^e", colnames(ref_embed)), 
+                            paste0(colnames(ref_embed), "_ref"), 
+                            colnames(ref_embed))
+  train_df <- merge(train_df, var_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+  train_df <- merge(train_df, ref_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+} else if (embedding_col == "no") {
+  cat("No embeddings used.\n")
+} else {
+  stop("Invalid 'embedding_col'. Must be either: delta, refvar, no")
+}
+
+####################################################################################
+# Filter training matrix
+####################################################################################
 
 # Subset to get columns for final prediction file 
 extra_cols <- train_df %>% select(PLINK_SNP_NAME, GENEBASS_AF, LOF_DISRUPTIVE, `Gene.refGene`)
