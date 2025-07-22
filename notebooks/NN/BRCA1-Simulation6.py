@@ -2,7 +2,7 @@
 # Train a neural network for supervised classification of BRCA1 variants using Evo2 embedding
 
 # REGION="RovHer_BRCA1" # BRCA1_DATA, RovHer_BRCA1 or RovHer_LDLR, "both" (BRCA1 + LDLR RVs)
-# y_label="clinvar" # clinvar (0, 0.25, 0.5, 0.75,1); class (LOF, FUNC/INT)
+# y_label="class" # clinvar (0, 0.25, 0.5, 0.75,1); class (LOF, FUNC/INT)
 # COMBO="refvar" # delta, refvar
 # LAYER="blocks.28.mlp.l3"
 
@@ -221,23 +221,34 @@ else:
     # BRCA1
     ACMG_col1 = pd.read_csv(label_file1, sep="\t", usecols=["PLINK_SNP_NAME", "ACMG_final"])
     ACMG_col1 = ACMG_col1.rename(columns={"ACMG_final": "clinvar"})
+    gene = pd.read_csv("/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/data/RovHer_BRCA1.txt", sep="\t", usecols=["PLINK_SNP_NAME", "LOF_DISRUPTIVE"])
+    gene = gene.rename(columns={"LOF_DISRUPTIVE": "class"})
+    ACMG_col1 = pd.merge(ACMG_col1, gene, on="PLINK_SNP_NAME", how="left")
+
     # LDLR
     ACMG_col2 = pd.read_csv(label_file2, sep="\t", usecols=["PLINK_SNP_NAME", "clinvar_clnsig"])
     ACMG_col2 = ACMG_col2.rename(columns={"clinvar_clnsig": "clinvar"})
+
+    gene = pd.read_csv("/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/data/RovHer_LDLR.txt", sep="\t", usecols=["PLINK_SNP_NAME", "LOF_DISRUPTIVE"])
+    gene = gene.rename(columns={"LOF_DISRUPTIVE": "class"})
+    ACMG_col2 = pd.merge(ACMG_col2, gene, on="PLINK_SNP_NAME", how="left")
+
     # Combine 
     data = pd.concat([ACMG_col1, ACMG_col2], ignore_index=True)
     print(f"BRCA1 and LDLR merged: {data.shape}")
-    # Filtering rows to remove NA 
-    NROWS=data.shape[0]
-    data = data[~data["clinvar"].isin(["", "NA", "CCP"])]
-    data["clinvar"] = data["clinvar"].apply(recode_clinvar)
-    print(data["clinvar"].value_counts(dropna=False))
 
-na_count = data[y_label].isna().sum()
-print(f"Number of NA values in {y_label} column: {na_count}\n")
-if na_count > 0:
-    data = data.dropna(subset=[y_label])
-    print("After removing NA:", data.shape)
+    # If ClinVar is chosen, remove NA rows
+    NROWS=data.shape[0]
+    if y_label == "clinvar":
+        data = data[~data["clinvar"].isin(["", "NA", "CCP"])]
+        data["clinvar"] = data["clinvar"].apply(recode_clinvar)
+        print(data["clinvar"].value_counts(dropna=False))
+
+# na_count = data[y_label].isna().sum()
+# print(f"Number of NA values in {y_label} column: {na_count}\n")
+# if na_count > 0:
+#     data = data.dropna(subset=[y_label])
+#     print("After removing NA:", data.shape)
 
 # if y_label == "clinvar":
 #     data = data[data['clinvar'] != "NA"]
@@ -327,11 +338,6 @@ if COMBO == "refvar":
             ref_reverse.shape[0] == data.shape[0]):
         raise ValueError("Number of rows in embeddings do not match number of rows in data.")
 
-print(f"---------- Values in {y_label} column -------------\n")
-print(data[y_label].value_counts())
-numeric_rows = data[y_label].apply(lambda x: isinstance(x, (int, float))).sum()
-print("Number of non-missing labels:", numeric_rows, "of", NROWS, "rows") #  631 of 3893 rows
-
 #######################################################
 # Subset columns
 #######################################################
@@ -379,13 +385,22 @@ if COMBO == "refvar":
 print(f"Concatenated x-feature vector: {feature_vec.shape}") #  (812, 8194)
 
 # Extract y-label vectors
-print(f"Label to extract: {y_label}\n")
-train_y = data[y_label].values
-if "class" in data.columns:
+if y_label == "class":
+    train_y = data["class"].values
     lof_count = data[data["class"] == 1].shape[0]
     other_count = data[data["class"] == 0].shape[0]
     print(f"Number of 'LOF': {lof_count}   'FUNC/INT': {other_count}\n")
 
+if y_label == "clinvar":
+    train_y = data["clinvar"].values
+    P_count = data[data["clinvar"] == 1].shape[0]
+    LP_count = data[data["clinvar"] == 0.75].shape[0]
+    VUS_count = data[data["clinvar"] == 0.5].shape[0]
+    LB_count = data[data["clinvar"] == 0.25].shape[0]
+    B_count = data[data["clinvar"] == 0].shape[0]
+    print(f"'P': {lof_count}  'LP': {LP_count} 'VUS': {VUS_count} 'LB': {LB_count} 'B': {B_count} \n")
+
+print(f"-------------------------------------\n")
 
 #######################################################
 # Split dataset
