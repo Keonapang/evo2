@@ -1,6 +1,18 @@
+# ANN Training
 # Train a neural network for supervised classification of BRCA1 variants using Evo2 embedding
 
-# ANN Training
+# REGION="RovHer_BRCA1" # BRCA1_DATA, RovHer_BRCA1 or RovHer_LDLR, "both" (BRCA1 + LDLR RVs)
+# y_label="clinvar" # clinvar (0, 0.25, 0.5, 0.75,1); class (LOF, FUNC/INT)
+# COMBO="refvar" # delta, refvar
+# LAYER="blocks.28.mlp.l3"
+
+# python3.11 "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/NN/BRCA1-Simulation6.py" \
+# --REGION $REGION \
+# --LAYER $LAYER \
+# --COMBO $COMBO \
+# --Y_LABEL $y_label
+
+##############################################################################################
 import sys
 import argparse
 import glob
@@ -38,12 +50,12 @@ from Bio import SeqIO
 
 
 parser = argparse.ArgumentParser(description="Evo2 embeddings")
-parser.add_argument("--MODEL_SIZE", type=str, help="7B or 40B")
-parser.add_argument("--SUBSET_METHOD", type=str, required=True, help="random, top, bottom, balanced, all")
-parser.add_argument("--REGION", type=str, help="BRCA1_DATA, RovHer_BRCA1 or RovHer_LDLR, both (BRCA1 + LDLR RVs)")
+parser.add_argument("--REGION", type=str, required=True, help="BRCA1_DATA, RovHer_BRCA1 or RovHer_LDLR, both (BRCA1 + LDLR RVs)")
 parser.add_argument("--LAYER", required=True,type=str, help="embedding layer")
 parser.add_argument("--COMBO", required=True,type=str, help="delta, refvar")
 parser.add_argument("--Y_LABEL", type=str, help="clinvar (0, 0.25, 0.5, 0.75,1); class (LOF, FUNC/INT)")
+parser.add_argument("--SUBSET_METHOD", type=str, help="random, top, bottom, balanced, all")
+parser.add_argument("--MODEL_SIZE", type=str, help="7B or 40B")
 
 args = parser.parse_args()
 MODEL_SIZE = args.MODEL_SIZE
@@ -56,14 +68,11 @@ y_label = args.Y_LABEL
 # REGION = "BRCA1_DATA" # BRCA1_DATA, RovHer_BRCA1 or RovHer_LDLR, "both" (BRCA1 + LDLR RVs)
 # LAYER="blocks.28.mlp.l3"
 # COMBO="refvar" # delta, refvar
-# y_label="class" # clinvar (0, 0.25, 0.5, 0.75,1); class (LOF, FUNC/INT)
+# y_label="clinvar" # clinvar (0, 0.25, 0.5, 0.75,1); class (LOF, FUNC/INT)
 
-# Directories
+# Input Directories
 INPUT_DIR = Path("/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/BRCA1_LDLR")
 INPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-OUTPUT_DIR = Path(f"/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/NN/BRCA1_LDLR_{COMBO}")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Input data: 
 delta_file = f"{INPUT_DIR}/{REGION}_{LAYER}_delta.csv"
@@ -72,10 +81,6 @@ ref_file = f"{INPUT_DIR}/{REGION}_{LAYER}_ref.csv"
 var_file = f"{INPUT_DIR}/{REGION}_{LAYER}_var.csv"
 ref_rev_file = f"{INPUT_DIR}/{REGION}_{LAYER}_ref_rev.csv"
 var_rev_file = f"{INPUT_DIR}/{REGION}_{LAYER}_var_rev.csv"
-
-# OUTPUT FILES
-plot1 = f"{OUTPUT_DIR}/{REGION}_{LAYER}_{y_label}_AUC_loss.png"
-plot2 = f"{OUTPUT_DIR}/{REGION}_{LAYER}_{y_label}_ROC.png"
 
 # Embedding input files
 if REGION == "BRCA1_DATA":
@@ -97,6 +102,14 @@ if REGION == "both":
     ref_rev_file2 = f"{INPUT_DIR}/{REGION}_{LAYER}_ref_rev.csv"
     var_rev_file2 = f"{INPUT_DIR}/{REGION}_{LAYER}_var_rev.csv"
     
+
+# Output Directories
+OUTPUT_DIR = Path(f"/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/NN/BRCA1_LDLR_{COMBO}")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# OUTPUT FILES
+plot1 = f"{OUTPUT_DIR}/{REGION}_{LAYER}_{y_label}_AUC_loss.png"
+plot2 = f"{OUTPUT_DIR}/{REGION}_{LAYER}_{y_label}_ROC.png"
 
 #######################################################
 # Define function
@@ -147,9 +160,6 @@ def binary_cross_entropy_np(y_true, y_pred):
     loss = -np.mean(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
     return loss
 
-#######################################################
-# Load training labels
-#######################################################
 def recode_clinvar(value):
     mapping = {
         "P": 1,
@@ -160,6 +170,10 @@ def recode_clinvar(value):
         "B/LB": 0.25
     }
     return mapping.get(value, 0.5)
+
+#######################################################
+# Load training labels
+#######################################################
 
 recode_map = {
     "Pathogenic": 1,
@@ -172,9 +186,8 @@ recode_map = {
     'Conflicting interpretations of pathogenicity': "NA",
 }
 
-print(f"Loading training labels (", y_label, ")...\n")
-
 # 1. Variant data + ClinVar labels 
+print(f"Loading training labels (", y_label, ")...\n")
 if REGION == "BRCA1_DATA":
     data = pd.read_excel(file, header=2)
     data = data[['chromosome', 'position (hg19)', 'reference', 'alt', 'function.score.mean', 'func.class', 'clinvar',]]
@@ -199,6 +212,11 @@ if REGION == "BRCA1_DATA":
     unique_clinvar_values = data['clinvar'].unique()
     print("Clinvar values: ", unique_clinvar_values)
     print("")
+    NROWS=data.shape[0]
+    if y_label == "clinvar":
+        data = data[data['clinvar'] != "NA"]
+        print("After removing NA in clinvar:", data.shape)
+
 else:
     # BRCA1
     ACMG_col1 = pd.read_csv(label_file1, sep="\t", usecols=["PLINK_SNP_NAME", "ACMG_final"])
@@ -209,7 +227,8 @@ else:
     # Combine 
     data = pd.concat([ACMG_col1, ACMG_col2], ignore_index=True)
     print(f"BRCA1 and LDLR merged: {data.shape}")
-    # (883, 2)
+    # Filtering rows to remove NA 
+    NROWS=data.shape[0]
     data = data[~data["clinvar"].isin(["", "NA", "CCP"])]
     data["clinvar"] = data["clinvar"].apply(recode_clinvar)
     print(data["clinvar"].value_counts(dropna=False))
@@ -219,7 +238,6 @@ print(f"Number of NA values in {y_label} column: {na_count}\n")
 if na_count > 0:
     data = data.dropna(subset=[y_label])
     print("After removing NA:", data.shape)
-NROWS=data.shape[0]
 
 # if y_label == "clinvar":
 #     data = data[data['clinvar'] != "NA"]
@@ -261,7 +279,8 @@ if COMBO == "refvar":
 #######################################################
 # Subset rows
 #######################################################
-# Check for duplicate rows based on the PLINK_SNP_NAME column
+
+# Check for duplicates
 data = data[~data['PLINK_SNP_NAME'].duplicated(keep='first')]
 
 if COMBO == "delta":
@@ -299,8 +318,8 @@ if COMBO == "refvar":
     ref = ref[ref['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
     ref_reverse = ref_reverse[ref_reverse['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
     # Tallies
-    print("Filtered labels file (data):", data.shape)
-    print("var:", var.shape, "var_reverse:", var_reverse.shape, "ref:", ref.shape, "ref_reverse:", ref_reverse.shape)
+    print("Filtered labels:", data.shape)
+    print("var:", var.shape, "var_rev:", var_reverse.shape, "ref:", ref.shape, "ref_rev:", ref_reverse.shape)
     # Check if the number of rows match
     if not (var.shape[0] == data.shape[0] and
             var_reverse.shape[0] == data.shape[0] and
@@ -308,7 +327,7 @@ if COMBO == "refvar":
             ref_reverse.shape[0] == data.shape[0]):
         raise ValueError("Number of rows in embeddings do not match number of rows in data.")
 
-print(f"Counts of unique values in {y_label} column:")
+print(f"---------- Values in {y_label} column -------------\n")
 print(data[y_label].value_counts())
 numeric_rows = data[y_label].apply(lambda x: isinstance(x, (int, float))).sum()
 print("Number of non-missing labels:", numeric_rows, "of", NROWS, "rows") #  631 of 3893 rows
@@ -360,7 +379,7 @@ if COMBO == "refvar":
 print(f"Concatenated x-feature vector: {feature_vec.shape}") #  (812, 8194)
 
 # Extract y-label vectors
-print(f"y-label to extract: {y_label}\n")
+print(f"Label to extract: {y_label}\n")
 train_y = data[y_label].values
 if "class" in data.columns:
     lof_count = data[data["class"] == 1].shape[0]
@@ -399,9 +418,9 @@ X_train = X_train.astype('float32')
 y_train = y_train.astype('float32')
 X_test = X_test.astype('float32')
 y_test = y_test.astype('float32')
+
 print(f"Training set size: {X_train.shape}") # (403, 16384)
 print(f"Test set size: {X_test.shape}\n") # (127, 16384)
-
 
 #######################################################
 # Train ANN
@@ -423,12 +442,11 @@ def build_model():
     return model
 
 ANN_model = build_model()
-ANN_model.summary()
+# ANN_model.summary()
 
 start_time = time.time()
-
-# reserves 15% of the training data (X_train and y_train) for validation during training
 if internal_validation_split == "yes":
+    # reserves 15% of the training data (X_train, y_train) for validation during training
     history = ANN_model.fit(
         X_train, y_train, 
         epochs=100, 
@@ -452,31 +470,52 @@ print("Training time: ", end_time - start_time)
 # Evlauate on test/validation set
 #######################################################
 
-# Filter test set to exclude rows where y_test is 0.5
-test_mask = y_test != 0.5
-X_test_filtered = X_test[test_mask]
-y_test_filtered = y_test[test_mask]
-print(f"X_test_filtered: {X_test_filtered.shape}") # (127, 16384
+if y_label == "clinvar":
+    print(f"\n------------- AUC (P/LP vs B/LB) ------------\n")
+    
+    # Remove VUS; which are rows where y_test == 0.5
+    test_mask = y_test != 0.5
+    X_test_filtered = X_test[test_mask]
+    y_test_filtered = y_test[test_mask]
+    val_mask = y_val != 0.5
+    X_val_filtered = X_val[val_mask]
+    y_val_filtered = y_val[val_mask]
+    
+    # Recode labels: 0.75 (LP) is recoded to 1, 0.25 (LB) is recoded to 0 
+    y_test_filtered = np.where(y_test_filtered == 0.75, 1, y_test_filtered) 
+    y_test_filtered = np.where(y_test_filtered == 0.25, 0, y_test_filtered)
+    print(f"y_test: {y_test.shape}")
+    print(f"y_test_filtered: {y_test_filtered.shape}\n")
+    y_val_filtered = np.where(y_val_filtered == 0.75, 1, y_val_filtered)
+    y_val_filtered = np.where(y_val_filtered == 0.25, 0, y_val_filtered)
+    
+    # Predict probabilities on the test and validation sets
+    y_test_pred_prob = ANN_model.predict(X_test_filtered).ravel()
+    y_val_pred_prob = ANN_model.predict(X_val_filtered).ravel()
+    
+    # Calculate AUROC for the test/validation set
+    auc_test = roc_auc_score(y_test_filtered, y_test_pred_prob)
+    if internal_validation_split == "no":  
+        auc_val = roc_auc_score(y_val_filtered, y_val_pred_prob)
+    
+    # For plotting ROC curve
+    fpr_test, tpr_test, thresholds_test = roc_curve(y_test_filtered, y_test_pred_prob)
+    fpr_val, tpr_val, thresholds_val = roc_curve(y_val_filtered, y_val_pred_prob)
 
-print(f"y_test: {y_test.shape}") # (127, 16384
-print(f"y_test_filtered: {y_test_filtered.shape}\n")
+else:
+    print(f"\n------------- AUC (LOF vs FUNC/INT) ------------\n")
 
-# Filter validation set to exclude rows where y_val is 0.5
-val_mask = y_val != 0.5
-X_val_filtered = X_val[val_mask]
-y_val_filtered = y_val[val_mask]
+    y_test_pred_prob = ANN_model.predict(X_test).ravel()
+    y_val_pred_prob = ANN_model.predict(X_val).ravel()
 
-# Evaluate model on filtered test and validation sets
-test_loss, test_auc = ANN_model.evaluate(X_test_filtered, y_test_filtered, verbose=2)
-# test_loss, test_auc = ANN_model.evaluate(X_test, y_test, verbose=2)
-print(f"Test Loss: {test_loss:.4f} | AUC: {test_auc:.4f}\n") # Test Loss: 0.7120 | AUC: 0.8740
+    # Calculate AUROC for the test/validation set
+    auc_test = roc_auc_score(y_test, y_test_pred_prob)
+    if internal_validation_split == "no":  
+        auc_val  = roc_auc_score(y_val, y_val_pred_prob)
 
-# Evaluate on the validation set
-if internal_validation_split == "no":  
-    val_loss, val_auc = ANN_model.evaluate(X_val_filtered, y_val_filtered, verbose=2)
-    # val_loss, val_auc = ANN_model.evaluate(X_val, y_val, verbose=2)
-    print(f"Validation Loss (filtered): {val_loss:.4f} | AUC: {val_auc:.4f}")
-
+    # For plotting ROC curve
+    fpr_test, tpr_test, thresholds_test = roc_curve(y_test, y_test_pred_prob)
+    fpr_val, tpr_val, thresholds_val = roc_curve(y_val, y_val_pred_prob)
 
 #######################################################
 # Plotting: train loss/AUC
@@ -485,7 +524,6 @@ if internal_validation_split == "no":
 plt.figure(figsize=(12, 5))
 plt.subplot(1, 2, 1)
 plt.plot(history.history['loss'], label='Training Loss')
-plt.plot(history.history['val_loss'], label='Validation Loss')
 plt.title('Training Loss')
 plt.xlabel('Epochs')
 plt.ylabel('Loss')
@@ -494,7 +532,6 @@ plt.legend()
 # Plot training and validation AUC
 plt.subplot(1, 2, 2)
 plt.plot(history.history['auc'], label='Training AUC')
-plt.plot(history.history['val_auc'], label='Validation AUC')
 plt.title('Training AUC')
 plt.xlabel('Epochs')
 plt.ylabel('AUC')
@@ -502,48 +539,35 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 plt.savefig(plot1)
-print("Loss plot:", f"{plot1}\n")
 
 
 #######################################################
 # ROC
 #######################################################
-# Binary thresholding for AUC calculation
-threshold = 0.5
 
-# Plot Test Set ROC Curve
-plt.figure(figsize=(12, 5))
-plt.subplot(1, 2, 1)
-y_test_binary = np.where(y_test_filtered > threshold, 1, 0)
-y_test_pred_prob = ANN_model.predict(X_test_filtered).ravel()
-fpr, tpr, thresholds = roc_curve(y_test_binary, y_test_pred_prob)
-auc = roc_auc_score(y_test_binary, y_test_pred_prob)
-print(f"AUC (binary thresholding - Test Set): {auc:.4f}")
-plt.plot(fpr, tpr, label=f"AUC = {auc:.4f}", color="blue")
-plt.plot([0, 1], [0, 1], 'k--', label="Random Guess", color="gray")
-plt.xlabel("False Positive Rate")
-plt.ylabel("True Positive Rate")
-plt.title("Test Set ROC Curve (Binary-thresholded AUC)")
-plt.legend(loc="lower right")
+plt.figure(figsize=(8, 6))
+
+# Test set
+plt.plot(fpr_test, tpr_test, label=f"Test Set AUC = {auc_test:.4f}", color="blue", linewidth=2)
+
+# Validation set
+plt.plot(fpr_val, tpr_val, label=f"Validation Set AUC = {auc_val:.4f}", color="green", linewidth=2)
+
+# Random guess line
+plt.plot([0, 1], [0, 1], 'k--', label="Random Guess", color="gray", linewidth=1.5)
+
+plt.xlabel("False Positive Rate", fontsize=12)
+plt.ylabel("True Positive Rate", fontsize=12)
+plt.title(f"ROC Curve for {y_label}", fontsize=14)
+plt.legend(loc="lower right", fontsize=10)
+
+# Grid and layout adjustments
 plt.grid(alpha=0.3)
-
-# Plot Validation Set ROC Curve
-plt.subplot(1, 2, 2)
-y_val_binary = np.where(y_val_filtered > threshold, 1, 0)
-y_val_pred_prob = ANN_model.predict(X_val_filtered).ravel()
-fpr_val, tpr_val, thresholds_val = roc_curve(y_val_binary, y_val_pred_prob)
-auc_val = roc_auc_score(y_val_binary, y_val_pred_prob)
-print(f"AUC (binary thresholding - Validation Set): {auc_val:.4f}")
-plt.plot(fpr_val, tpr_val, label=f"AUC = {auc_val:.4f}", color="green")
-plt.plot([0, 1], [0, 1], 'k--', label="Random Guess", color="gray")
-plt.xlabel("False Positive Rate")
-plt.ylabel("True Positive Rate")
-plt.title("Validation Set ROC Curve (Binary-thresholded AUC)")
-plt.legend(loc="lower right")
-plt.grid(alpha=0.3)
-
 plt.tight_layout()
-plt.savefig(f"{plot2}")
+
+plt.savefig(f"{OUTPUT_DIR}/{REGION}_{LAYER}_ROC.png")
 plt.show()
-print(f"AUC (Test): {auc:.4f}  (Validation): {auc_val:.4f}")
+print(f"AUC (Test): {auc_test:.4f}  (Validation): {auc_val:.4f}")
+
+print("Results in:", f"{OUTPUT_DIR}\n")
 
