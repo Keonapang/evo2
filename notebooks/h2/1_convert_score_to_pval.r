@@ -4,40 +4,41 @@
 # STEP 1) Convert variant scores to p-values (0-1)
 # 			Use a known distribution, (e.g.normal distribution), the p-value can be calculated directly using that distribution.
 
-# Example of INPUT score_path:
+# Example of INPUT input_file:
             #      PLINK_SNP_NAME GENEBASS_AF LOF_DISRUPTIVE      yhat
             # 1: 10:100042482:G:A  2.6588e-06              0 0.9021423
 
-# OUTPUT DIR: $working_dir/1_convert_to_pval
+# OUTPUT DIR: $DIR_WORK/1_convert_to_pval
 # OUTPUT file: ${score}_01range.txt and ${score}_01range_CHR_1-22.txt 
 
       # CHR	SNP	BP	A1	A2	pathogenicity_score	rank	P
       # 10	10:100481931:G:C	100481931	G	C	-5.53341715408378	1	3.29765925550726e-07
       # 10	10:100482620:G:A	100482620	G	A	-4.23530024406165	2	3.29765925550726e-07
 
-# score_path="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/Training/height_FDR/GENEBASS_RV_train_RV_pred_Oct10/cv_MARS_d3_np15_nv0.1_lowerAF3e-05_upperAF1e-02_PLINK_AF_LOF_refGENE_yhat_200K_missense.txt"
-# score_col="yhat"
-# score_sort="ascending" # "descending" or "ascending" (lowest to highest)
-# working_dir="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/RVPRS/0_LD_CLUMP"
-# variant_type="LOF" # "missense", "LOF", or "all" (no LOF_DISRUPTIVE column filtering needed)
-# Rscript /mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/RARity_pipeline/SCRIPTS/LD_CLUMP_SCRIPTS/1_convert_score_to_pval.r $score_path $score_col $score_sort $working_dir $variant_type $variant_subset
+# input_file="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/Training/height_FDR/GENEBASS_RV_train_RV_pred_Oct10/cv_MARS_d3_np15_nv0.1_lowerAF3e-05_upperAF1e-02_PLINK_AF_LOF_refGENE_yhat_200K_missense.txt"
+# anno_name="yhat"
+# sort="ascending" # "descending" or "ascending" (lowest to highest)
+# DIR_WORK="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/RVPRS/0_LD_CLUMP"
+# var_type="LOF" # "missense", "LOF", or "all" (no LOF_DISRUPTIVE column filtering needed)
+# Rscript /mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/RARity_pipeline/SCRIPTS/LD_CLUMP_SCRIPTS/1_convert_score_to_pval.r $input_file $anno_name $sort $DIR_WORK $var_type $num_var_subset
 
 ###############################################################################################################################################################
 rm(list=ls())
 args <- commandArgs(trailingOnly = TRUE)
-score_path <- args[1] # score file path 
-score_col <- args[2] # scores column name 
-score_sort <- args[3] # ascending (lowest to highest) or descending (highest to lowest)
-working_dir <- args[4] # 
-variant_type <- args[5] # "missense", "LOF", or "all" (no LOF_DISRUPTIVE column filtering needed)
-variant_subset <- as.numeric(args[6]) # take the top XX subset of variants (rows), after rearranging rows by score_sort
+input_file <- args[1] # score file path 
+anno_name <- args[2] # scores column name 
+sort <- args[3] # ascending (lowest to highest) or descending (highest to lowest)
+DIR_WORK <- args[4] # 
+var_type <- args[5] # "missense", "LOF", or "all" (no LOF_DISRUPTIVE column filtering needed)
+num_var_subset <- as.numeric(args[6]) # take the top XX subset of variants (rows), after rearranging rows by sort
+subset_by <- args[7] # subset by either "num" (just the num_var_subset itself) or "percentage"" (num_var_subset %) 
 
-# score_path <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/June30/RovHer_chr17_win4096_seq3000_all.xlsx"
-# score_col <- "evo2_delta_score" # or "yhat"d
-# score_sort <- "ascending"
-# working_dir <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/June30_h2/1000_RV_win4096"
-# variant_type <- "all"
-# variant_subset <- 1000
+# input_file <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/June30/RovHer_chr17_win4096_seq3000_all.xlsx"
+# anno_name <- "evo2_delta_score" # or "yhat"d
+# sort <- "ascending"
+# DIR_WORK <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/June30_h2/1000_RV_win4096"
+# var_type <- "all"
+# num_var_subset <- 1000
 
 suppressMessages(library(dplyr))
 suppressMessages(library(data.table))
@@ -47,20 +48,24 @@ if (!requireNamespace("openxlsx", quietly = TRUE)) {
 library(openxlsx)
 library(readxl)
 
+if (var_type=="all") {
+    sort <- "not needed" # Default to "all" if not specified
+}
+
 cat("\n")
 cat("---------- Inputs ---------\n\n")
-cat("score_path:", score_path, "\n\n")
-cat("score_col:", score_col, "\n")
-cat("score_sort:", score_sort, "\n\n")
-cat("working_dir:", working_dir, "\n\n")
+cat("input_file:", input_file, "\n\n")
+cat("anno_name:", anno_name, "\n")
+cat("sort:", sort, "\n\n")
+cat("DIR_WORK:", DIR_WORK, "\n\n")
 cat("---------------------------\n")
 
 ########################################################
 # Create directories  
 ########################################################
-dir.create(working_dir, showWarnings = FALSE) # Create root directory 
+dir.create(DIR_WORK, showWarnings = FALSE) # Create root directory 
 
-DIR_OUT <- paste0(working_dir, "/1_convert_to_pval")
+DIR_OUT <- paste0(DIR_WORK, "/1_convert_to_pval")
 dir.create(DIR_OUT) # Create results directory 
 cat("DIR_OUT:", DIR_OUT, "\n\n")
 setwd(DIR_OUT)
@@ -69,25 +74,29 @@ setwd(DIR_OUT)
 # Load input file (scores) 
 ########################################################
 
+if (!file.exists(input_file)) {
+    stop(paste("DOES NOT EXIST : ", input_file))
+}
+
 # Read file (given complete path)
-if (grepl("\\.xlsx$", score_path)) {
-    INPUT_SCORES <- read_excel(score_path)
-} else if (grepl("\\.txt$", score_path) || grepl("\\.tsv$", score_path)) {
-    INPUT_SCORES <- fread(score_path, header = TRUE, sep = "\t")
+if (grepl("\\.xlsx$", input_file)) {
+    INPUT_SCORES <- read_excel(input_file)
+} else if (grepl("\\.txt$", input_file) || grepl("\\.tsv$", input_file)) {
+    INPUT_SCORES <- fread(input_file, header = TRUE, sep = "\t")
 } else {
-    stop(paste("Unsupported file format for:", score_path))
+    stop(paste("Unsupported file format for:", input_file))
 }
 print(head(INPUT_SCORES,2)) 
 cat("\n")
 cat("INPUT_SCORES: ", dim(INPUT_SCORES)[1], "x", dim(INPUT_SCORES)[2], "\n\n") # INPUT_SCORES:  3279474 x 4 
 
 # Check of column name exists
-if (!score_col %in% colnames(INPUT_SCORES)) {
-    stop(paste("Column", score_col, "not found in the input file!!\n"))
+if (!anno_name %in% colnames(INPUT_SCORES)) {
+    stop(paste("Column", anno_name, "not found in the input file!!\n"))
 }
 
 # Remove rows where the column has NA or empty values
-INPUT_SCORES <- INPUT_SCORES[!(is.na(INPUT_SCORES[[score_col]]) | INPUT_SCORES[[score_col]] == ""), ]
+INPUT_SCORES <- INPUT_SCORES[!(is.na(INPUT_SCORES[[anno_name]]) | INPUT_SCORES[[anno_name]] == ""), ]
 cat("1. Remove NA: ", dim(INPUT_SCORES)[1], "x", dim(INPUT_SCORES)[2], "\n") # INPUT_SCORES:  3279474 x 4 
 
 ####################################################################################
@@ -108,35 +117,37 @@ if ("class" %in% colnames(INPUT_SCORES)) {
     INPUT_SCORES[, LOF_DISRUPTIVE := ifelse(LOF_DISRUPTIVE == "LOF", 1, 
                                             ifelse(LOF_DISRUPTIVE == "FUNC/INT", 0, LOF_DISRUPTIVE))]
 }
-if (variant_type == "missense") {
+if (var_type == "missense") {
     INPUT_SCORES <- INPUT_SCORES[INPUT_SCORES$LOF_DISRUPTIVE == 0, ]
     cat("2. After removing LOF: ", dim(INPUT_SCORES)[1], "x", dim(INPUT_SCORES)[2], "\n") #  3171071 (non-LOF) x 4 
-} else if (variant_type == "LOF") {
+} else if (var_type == "LOF") {
     INPUT_SCORES <- INPUT_SCORES[INPUT_SCORES$LOF_DISRUPTIVE == 1, ]
     cat("2. After removing missense: ", dim(INPUT_SCORES)[1], "x", dim(INPUT_SCORES)[2], "\n") #  3171071 (non-LOF) x 4 
-} else if (variant_type == "all") {
+} else if (var_type == "all") {
     cat("2. No variant class filtering: ", dim(INPUT_SCORES)[1], "x", dim(INPUT_SCORES)[2], "\n") #  3171071 (non-LOF) x 4 
 } else {
-    stop("Invalid variant_type. Use 'missense', 'LOF', or 'all'.")
+    stop("Invalid var_type. Use 'missense', 'LOF', or 'all'.")
 }
 
 ####################################################################################
 # Sort by scores from lowest to highest
 ####################################################################################
 
-if (score_sort == "descending") {
-    INPUT_SCORES <- INPUT_SCORES[order(-INPUT_SCORES[[score_col]]), ]
-} else if (score_sort == "ascending") {
-    INPUT_SCORES <- INPUT_SCORES[order(INPUT_SCORES[[score_col]]), ]
+if (sort == "descending") {
+    INPUT_SCORES <- INPUT_SCORES[order(-INPUT_SCORES[[anno_name]]), ]
+} else if (sort == "ascending") {
+    INPUT_SCORES <- INPUT_SCORES[order(INPUT_SCORES[[anno_name]]), ]
+} else if (sort == "not needed") {
+    cat("\nVariant sorting NOT needed because we're taking the entire list into account\n")
 } else {
-    stop("Invalid score_sort value. Use 'ascending' or 'descending'.")
+    stop("Invalid sort value. Use 'ascending' or 'descending'.")
 }
 
-# If a variant_subset is specified, take the top XX variants
-if (!is.na(variant_subset) && variant_subset > 0 && nrow(INPUT_SCORES) >= variant_subset) {
-    INPUT_SCORES <- head(INPUT_SCORES, variant_subset)
-    cat("3. After taking top", variant_subset, "variants: ", dim(INPUT_SCORES)[1], "x", dim(INPUT_SCORES)[2], "\n")
-} else if (!is.na(variant_subset) && variant_subset > 0) {
+# If a num_var_subset is specified, take the top XX variants
+if (!is.na(num_var_subset) && num_var_subset > 0 && nrow(INPUT_SCORES) >= num_var_subset) {
+    INPUT_SCORES <- head(INPUT_SCORES, num_var_subset)
+    cat("3. After taking top", num_var_subset, "variants: ", dim(INPUT_SCORES)[1], "x", dim(INPUT_SCORES)[2], "\n")
+} else if (!is.na(num_var_subset) && num_var_subset > 0) {
     cat("3. Not enough rows in INPUT_SCORES to subset. Using all available rows.\n")
 } else {
     cat("3. No variant subset specified. Using all variants.\n\n")
@@ -151,7 +162,7 @@ if (!is.na(variant_subset) && variant_subset > 0 && nrow(INPUT_SCORES) >= varian
 range01 <- function(x){(x-min(x))/(max(x)-min(x))}
 	
 # Select 2 columns only 
-annodf <- select(INPUT_SCORES, c("PLINK_SNP_NAME", score_col))
+annodf <- select(INPUT_SCORES, c("PLINK_SNP_NAME", anno_name))
 cat("Dimension:", dim(annodf)[1], "x", dim(annodf)[2], "\n\n") #  3017195 x 2 
 
 # Extract rows that have no missing values.
@@ -178,7 +189,7 @@ annodf$A2 <- sapply(split_names, `[`, 4)
 colnames(annodf)[colnames(annodf)=="PLINK_SNP_NAME"] <- "SNP"
 
 # Re-order the columns in annodf
-annodf <- dplyr::select(annodf, "CHR", "SNP", "BP", "A1", "A2", score_col, "rank", "P")
+annodf <- dplyr::select(annodf, "CHR", "SNP", "BP", "A1", "A2", anno_name, "rank", "P")
 cat("Final p-value ranks:", dim(annodf)[1], "x", dim(annodf)[2], "\n\n") # RRV:  3017195 x 8; 3169500 x 8 
 print(head(annodf,2)) # CHR SNP BP A1 A2 score rank P
 cat("\n")
@@ -187,10 +198,10 @@ cat("\n")
 for (ch in 1:22) {
 	df<-filter(annodf, CHR==ch)
 	df2<-df[order(df$BP),]
-	outfile<-as.character(paste0(DIR_OUT,"/",score_col,"_01range_CHR_",ch))
+	outfile<-as.character(paste0(DIR_OUT,"/",anno_name,"_01range_CHR_",ch))
 	write.table(df2, outfile,append=F,quote=F,row.names=F,col.names=T,sep="\t")
 }
 
 # Write FULL file (Chr 1 -22 included)
-write.table(annodf, paste0(DIR_OUT,"/", score_col,"_01range.txt"), append=F,quote=F,row.names=F,col.names=T,sep="\t")
-cat("Results:", paste0(DIR_OUT,"/", score_col,"_01range.txt"), "\n\n")
+write.table(annodf, paste0(DIR_OUT,"/", anno_name,"_01range.txt"), append=F,quote=F,row.names=F,col.names=T,sep="\t")
+cat("Results:", paste0(DIR_OUT,"/", anno_name,"_01range.txt"), "\n\n")

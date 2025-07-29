@@ -1,27 +1,34 @@
 #!/usr/bin/env Rscript
-# NEW: saves all 5 cv_mars models!!!
-# Date: Oct 8, 2024
+# Date: July 20, 2025
 #####################################################################################################################################################
-# Descrption: Training one 'universal' MARS model with a single-trait's FDR
-#              5-fold CV (per chr region). Then saving FDR predictions on all ~ 3 million RVs from the UKB 200K WES. 
-#             This subset of RV will be the same across all cont' traits. 
-# Model usage: Can also be used for multi-trait MARS model (for height_FDR, LDL_FDR, BMI_FDR etc...)
-# Note: these scores were not performing well on the Mendelian analysis, these scores work well for the h2 curve only as they enrich for functional RV but not necessarily the ultra-rare highly penetrance Mendelian causal variants
+# Descrption: Training one MARS model with a single-trait's FDR using 5-fold CV, then saves all predictions/plots/scores into one folder.
+    # - Allows adapting RovHer framework to include MORE predictor columns (i.e. evo2 embeddings etc..)
+    # - enables pre-filtering step to remove poorly correlated predictors under a p-value threshold
 # ####################################################################################################################################################
-# trait="height" # LDL_direct, BMI, height, Cystatin_C, Alkaline_phosphatase, alanine_aminotransferase, Creatinine, Aspartate_aminotransferase
-# train_path="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/Training/height_FDR/genebass_AF001_chrall_vars_gene_final.txt"  # 4926639 x  80 
+# trial_name="chr17" #  B C D E
 # d=3
-# np=2000            # np=14, np=16, np=18, np=NULL
+# np=1000 # 50, 20000, Reducing nprune reduces exhaustive search time; maximum number of permissible terms in the final pruned model.
 # nv=0.1
-# AF=0.00003         # lower MAF (AF=0.000003,0.000004, 0.000006, 0.00001)
-# upper_MAF=0.01     # upper MAF
-# model="her"        # "her"" or "men""
-# /usr/bin/time -v Rscript "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/20231101_annotation/SCRIPT_12_GENEBASS_RV_train_RV_pred_Oct10.r" $trait $AF $train_path $d $np $nv $model $upper_MAF > "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/Training/height_FDR/log/cv_MARS_d${d}_np${np}_nv${nv}_lowerAF${AF}_upperAF${upper_MAF}_Feb15_${model}.log" 2>&1 &
+# AF=0
+# cores=18
+# anno_cols="yes"
+# embedding_col="refvar" # "delta" , "no" (no embeddings), "refvar"
+# blks="28" # (not accounted for if embedding_col="no")
+# reverse="no" # "yes or "no" (to include reverse complement embeddings)
+# pval_thresh=0.1 # numeric(linreg pre-filtering to keep only sig. predictors to pval < pval_thresh)
+# script_path="/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/MARS"
+
+# for t in $trial_name; do
+# for blk in $blks; do
+#   Rscript ${script_path}/train_cv_MARS.r $AF $d $np $nv $t $anno_cols $embedding_col $blk $cores 
+# done
+# done
 
 #####################################################################################################################################################
 if (!requireNamespace("doParallel", quietly = TRUE)) install.packages("doParallel")
 if (!requireNamespace("tidyverse", quietly = TRUE)) install.packages("tidyverse")
 if (!requireNamespace("earth", quietly = TRUE)) install.packages("earth")
+if (!requireNamespace("data.table", quietly = TRUE)) install.packages("data.table")
 suppressMessages(library(data.table))
 suppressMessages(library(dplyr))
 suppressMessages(library(tidyverse))
@@ -42,41 +49,48 @@ anno <- args[6] # "yes", "no"
 embedding_col <- as.character(args[7]) # "delta" , "no" (no embeddings), "refvar"
 blk <- as.character(args[8])
 cores <- as.numeric(args[9]) # "yes", "no"
+reverse <- as.character(args[10]) # "yes or "no" (to include reverse complement embeddings)
+pval_thresh <- as.numeric(args[11])  # "yes or "no" (linreg pre-filtering to keep only sig. predictors to pval < pval_thresh)
+
+# AF <- 0 # Lower bound MAF threshold
+# d <- 3
+# np <- 300
+# nv <- 0.1
+# trial_name <- "chr17" # "A", "B", "C", "D", "E"
+# anno <- "yes" # "yes", "no"
+# embedding_col <- "delta"
+# blk <- "28" # "28", "29", "30", "31", "32", "33", "34", "35"
+# cores <- 30 # Number of cores to use for parallel processing
+# date <- 20250723
+# reverse <- "no" # "yes or "no" (to include reverse complement embeddings)
+# pval_thresh <- 0.01 # numeric(linreg pre-filtering to keep only sig. predictors to pval < pval_thresh)
+
 date <- format(Sys.Date(), "%Y%m%d")
 cat("date:", date, "\n")
 registerDoParallel(makeCluster(cores))
 
-# AF <- 0 # Lower bound MAF threshold
-# d <- 3
-# np <- 2000
-# nv <- 0.1
-# trial_name <- "chr17" # "A", "B", "C", "D", "E"
-# anno <- "yes" # "yes", "no"
-# embedding_col <- "yes"
-# blk <- "28" # "28", "29", "30", "31", "32", "33", "34", "35"
-# cores <- 30 # Number of cores to use for parallel processing
-# date <- 20250717
-
 upper_MAF <- 0.01
 p <-2
 t <- 0.00001
-nk <- 600
+nk <- 400
 if (np == "NULL") {
   np <- NULL
 } else {
   np <- as.numeric(np)
 }
-
-# Output model name
 upper_MAF <- format(as.numeric(upper_MAF), scientific = TRUE, digits = 4)
 AF <- format(as.numeric(AF), scientific = TRUE, digits = 4)
 
+# Output model name
 if (embedding_col == "delta" || embedding_col == "refvar") {
     model_name <- paste0(trial_name, "_MARS_d",d,"_np",np,"_nv", nv,"_lowerAF",AF,"_anno", anno, "_embed", embedding_col, "_blk", blk) 
+    if (reverse == "yes") {
+        model_name <- paste0(model_name, "_rev")
+    }
 } else if (embedding_col == "no") {
     model_name <- paste0(trial_name, "_MARS_d",d,"_np",np,"_nv", nv,"_lowerAF",AF,"_anno", anno, "_embed", embedding_col) 
 } else {
-    stop("Invalid 'embedding_col'. Must be either: delta, refvar, no, yes")
+    stop("Invalid 'embedding_col'. Must be either: delta, refvar, no")
 }
 cat("\nModel name: ", model_name, "\n\n")
 
@@ -89,13 +103,16 @@ DIR_EMBEDDING <- paste0(server,"/evo2/July20_embedding")
 # Output directory
 ROOTDIR <- paste0(server,"/evo2/MARS/",date, "_", embedding_col) # <------ MODIFY!
 OUTDIR1 <- paste0(ROOTDIR,"/", trial_name)
-OUTDIR <- paste0(OUTDIR1,"/", model_name)
+OUTDIR2 <- paste0(OUTDIR1,"/pval_", pval_thresh)
+OUTDIR <- paste0(OUTDIR2,"/", model_name)
 
 if (!dir.exists(ROOTDIR)) {dir.create(ROOTDIR, recursive = TRUE)}
 if (!dir.exists(OUTDIR1)) {dir.create(OUTDIR1, recursive = TRUE)}
+if (!dir.exists(OUTDIR2)) {dir.create(OUTDIR2, recursive = TRUE)}
 if (!dir.exists(OUTDIR)) {dir.create(OUTDIR, recursive = TRUE)}
 
 # Output files
+pval_file <- paste0(OUTDIR2, "/sig_pval.txt") # only if pval_thresh is set
 RData_file <- paste0(OUTDIR, "/", model_name, "_scores.RData")
 scores_file <- paste0(OUTDIR, "/", model_name, "_scores.txt")
 metrics_file <- paste0(OUTDIR, "/layer", blk, "_metrics.txt")
@@ -103,8 +120,12 @@ metrics_file <- paste0(OUTDIR, "/layer", blk, "_metrics.txt")
 ####################################################################################
 # INPUT FILES
 ####################################################################################
+
+# Script
+pval_script <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/Keona_scripts/linreg_pval_filter.r"
+
 # Functional annotations
-train_path <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/Training/height_FDR/genebass_AF001_chrall_vars_gene_final.txt"  # 4926639 x  80 
+train_path <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/Training/height_FDR/genebass_AF001_chrall_vars_gene_final.txt" # 4926639 x  80 
 predict_path <- train_path
 
 # Evo2 scores
@@ -115,6 +136,11 @@ file_delta <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_blocks.", blk, ".m
 file_var <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_blocks.", blk, ".mlp.l3_var.csv")
 file_ref <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_blocks.", blk, ".mlp.l3_ref.csv")
 
+# Reverse complement embeddings
+file_delta_rev <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_blocks.", blk, ".mlp.l3_delta_rev.csv")
+file_var_rev <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_blocks.", blk, ".mlp.l3_var_rev.csv")
+file_ref_rev <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_blocks.", blk, ".mlp.l3_ref_rev.csv")
+
 # all_data <- rbindlist(
 #   lapply(1:6, function(i) {
 #     file_embed <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_", i, "_blocks.", blk, ".mlp.l3_delta.csv")
@@ -124,75 +150,166 @@ file_ref <- paste0(DIR_EMBEDDING, "/RovHer_", trial_name, "_blocks.", blk, ".mlp
 # cat("All files have been combined and saved to:", output_file, "\n")
 
 ####################################################################################
-# Load input data
+# Load 75 functional annotations
 ####################################################################################
 train_df <- as.data.frame(fread(train_path, header = TRUE))
-cat("train_df: ", dim(train_df)[1], "RVs x", dim(df)[2], "cols\n\n")
+cat("train_df: ", dim(train_df)[1], "RVs x", dim(train_df)[2], "\n\n")
 
-# Load Evo2 scores
+# Evo2 scores
 evo2_scores <- as.data.frame(fread(file_score, header = TRUE, 
                             select = c("PLINK_SNP_NAME", "evo2_delta_score"),
                             showProgress = FALSE))
-
+####################################################################################
 # Load embeddings
-
+####################################################################################
 if (embedding_col == "delta") {
   delta_embed <- fread(file_delta)
   delta_embed <- delta_embed %>% select(-layer, -input_file, -RovHer_score)
-  cat("delta_embed: ", dim(delta_embed)[1], "RVs x", dim(delta_embed)[2], "cols\n\n")
+  cat("delta_embed:", dim(delta_embed)[1], "x", dim(delta_embed)[2], "\n\n")
 } else if (embedding_col == "refvar") {
   var_embed <- fread(file_var)
   ref_embed <- fread(file_ref)
   var_embed <- var_embed %>% select(-layer, -input_file, -RovHer_score)
   ref_embed <- ref_embed %>% select(-layer, -input_file, -RovHer_score)
-  cat("var_embed: ", dim(var_embed)[1], "RVs x", dim(var_embed)[2], "cols\n\n")
-  cat("ref_embed: ", dim(ref_embed)[1], "RVs x", dim(ref_embed)[2], "cols\n\n")
-
+  cat("var_embed:",dim(var_embed)[1],"x",dim(var_embed)[2], "  ref_embed:",dim(ref_embed)[1],"x",dim(ref_embed)[2],"\n")
   if (nrow(var_embed) != nrow(ref_embed)) {
       stop("Number of rows in delta, var, and ref embeddings do not match.")
   }
 }
 
-####################################################################################
-# Build training matrix
-####################################################################################
+# reverse complement embeddings
+if (reverse == "yes") {
+  cat("Adding reverse complement strand...\n")
+
+  if (embedding_col == "delta") {
+    delta_embed <- fread(file_delta_rev)
+    delta_embed <- delta_embed %>% select(-layer, -input_file, -RovHer_score)
+
+  } else if (embedding_col == "refvar") {
+    var_embed <- fread(file_var_rev)
+    ref_embed <- fread(file_ref_rev)
+    var_embed <- var_embed %>% select(-layer, -input_file, -RovHer_score)
+    ref_embed <- ref_embed %>% select(-layer, -input_file, -RovHer_score)
+
+    if (nrow(var_embed) != nrow(ref_embed)) {
+        stop("Number of rows in delta, var, and ref embeddings do not match.")
+    }
+  }
+  colnames(csv1_df_rev) <- ifelse(grepl("^e", colnames(csv1_df_rev)), paste0(colnames(csv1_df_rev), "_rev_delta"), colnames(csv1_df_rev))
+  colnames(csv1ref_df_rev) <- ifelse(grepl("^e", colnames(csv1ref_df_rev)), paste0(colnames(csv1ref_df_rev), "_rev_ref"), colnames(csv1ref_df_rev))
+  colnames(csv1var_df_rev) <- ifelse(grepl("^e", colnames(csv1var_df_rev)), paste0(colnames(csv1var_df_rev), "_rev_var"), colnames(csv1var_df_rev))
+
+  # Remove columns "input_file", "layer", "PLINK_SNP_NAME", "RovHer_score" from csv1_df_rev
+  columns_to_remove <- c("input_file", "layer", "PLINK_SNP_NAME", "RovHer_score")
+  csv1_df_rev <- csv1_df_rev[, !..columns_to_remove, with = FALSE] 
+  csv1ref_df_rev <- csv1ref_df_rev[, !..columns_to_remove, with = FALSE]
+  csv1var_df_rev <- csv1var_df_rev[, !..columns_to_remove, with = FALSE]
+  cat("csv1_df_rev:", dim(csv1_df_rev), "\n")
+
+  # join csv1_df_rev to the end of csv1_df column-wise
+  csv1_df <- cbind(csv1_df, csv1_df_rev)
+  csv1ref_df <- cbind(csv1ref_df, csv1ref_df_rev)
+  csv1var_df <- cbind(csv1var_df, csv1var_df_rev)
+  cat("csv1_df + reverse complement:", dim(csv1_df), "\n")
+}
 
 # Keep only certain chromosomes RVs
 train_df <- train_df %>% filter(grepl("^17:", PLINK_SNP_NAME)) 
-cat("train_df Chr 17-only: ", dim(train_df)[1], "RVs x", dim(df)[2], "cols\n\n") # 'df' of size 3 million x 97 cols
-colnames(train_df)
-cat("\n")
+cat("train_df Chr 17-only: ", dim(train_df)[1], "RVs x", dim(train_df)[2], "cols\n\n") # 'df' of size 3 million x 97 cols
 
-# merge Evo2 scores
-train_df <- merge(train_df, evo2_scores, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+####################################################################################
+# If p-val threshold is set, do pre-filtering of predictor cols using linear regression
+####################################################################################
 
-# merge embeddings
-if (embedding_col == "delta") {
-  train_df <- merge(train_df, delta_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
-} else if (embedding_col == "refvar") {
-  colnames(var_embed) <-ifelse(grepl("^e", colnames(var_embed)), 
-                            paste0(colnames(var_embed), "_var"), 
-                            colnames(var_embed))
-  colnames(ref_embed) <-ifelse(grepl("^e", colnames(ref_embed)), 
-                            paste0(colnames(ref_embed), "_ref"), 
-                            colnames(ref_embed))
-  train_df <- merge(train_df, var_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
-  train_df <- merge(train_df, ref_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
-} else if (embedding_col == "no") {
-  cat("No embeddings used.\n")
-} else {
-  stop("Invalid 'embedding_col'. Must be either: delta, refvar, no")
+if (pval_thresh != "NA" && pval_thresh > 0) {
+
+  cat("Pre-filtering predictors to keep only p-values < ", pval_thresh, "\n")
+  embedding_df <- train_df %>% select(PLINK_SNP_NAME, height_FDR, GENEBASS_AF)
+
+  if (embedding_col == "delta") {
+    embedding_df <- merge(embedding_df, delta_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+  } else if (embedding_col == "refvar") {
+    colnames(var_embed) <-ifelse(grepl("^e", colnames(var_embed)), paste0(colnames(var_embed), "_var"), colnames(var_embed))
+    colnames(ref_embed) <-ifelse(grepl("^e", colnames(ref_embed)), paste0(colnames(ref_embed), "_ref"),  colnames(ref_embed))
+    embedding_df <- merge(embedding_df, var_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+    embedding_df <- merge(embedding_df, ref_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+  } else if (embedding_col == "no") {
+    cat("No embeddings used.\n")
+  } else {
+    stop("Invalid 'embedding_col'. Must be either: delta, refvar, no")
+  }
+
+  if (!file.exists(pval_file)) {
+
+    # Iterate through each predictor column
+    cat("Performing linear regression on predictors...\n")
+    results <- data.frame(Predictor = character(), P_value = numeric(), stringsAsFactors = FALSE)
+    predictor_cols <- colnames(embedding_df)[-c(1, 3)]  # Exclude PLINK_SNP_NAME, height_FDR, GENEBASS_AF
+    for (col in predictor_cols) {
+      formula <- as.formula(paste("height_FDR ~", col))
+      model <- lm(formula, data = embedding_df)
+      p_value <- summary(model)$coefficients[2, 4]  # 2nd row corresponds to the predictor
+      results <- rbind(results, data.frame(Predictor = col, P_value = p_value, stringsAsFactors = FALSE))
+    }
+    cat("Subset results to keep only significant p-value...\n")
+    sig_results <- results[results$P_value < pval_thresh, ]
+    cat("All predictors:", dim(results)[1],"     Sig. predictors:", dim(sig_results), "\n\n")
+    fwrite(sig_results, file = pval_file, sep = "\t", quote = FALSE, row.names = FALSE)
+
+    # Filter to keep only significant predictors
+    embed_cols_to_keep <- sig_results$Predictor
+    embedding_df <- embedding_df %>%
+                    select(PLINK_SNP_NAME, height_FDR, GENEBASS_AF, all_of(embed_cols_to_keep))
+    cat("Significant embedding predictors: ", dim(embedding_df)[1], "x", dim(embedding_df)[2], "\n\n")
+
+  } else { # If significant predictors file exists already, load it
+      cat("Sig. predictors file already exists. Loading it in....\n")
+      sig_results <- fread(pval_file, header = TRUE)
+      embed_cols_to_keep <- sig_results$Predictor
+      embedding_df <- embedding_df %>%
+                    select(PLINK_SNP_NAME, height_FDR, GENEBASS_AF, all_of(embed_cols_to_keep))
+    cat("Significant embedding: ", dim(embedding_df)[1], "x", dim(embedding_df)[2], "\n\n")
+  }
+
+} else { # if no p-value thresholding is needed, we just use all predictors
+
+    if (embedding_col == "delta") {
+      embedding_df <- merge(embedding_df, delta_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+  
+  } else if (embedding_col == "refvar") {
+      
+      colnames(var_embed) <-ifelse(grepl("^e", colnames(var_embed)), paste0(colnames(var_embed), "_var"), colnames(var_embed))
+      colnames(ref_embed) <-ifelse(grepl("^e", colnames(ref_embed)), paste0(colnames(ref_embed), "_ref"),  colnames(ref_embed))
+      embedding_df <- merge(embedding_df, var_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+      embedding_df <- merge(embedding_df, ref_embed, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+    
+  } else if (embedding_col == "no") {
+      cat("No embeddings used.\n")
+  } else {
+      stop("Invalid 'embedding_col'. Must be either: delta, refvar, no")
+  }
 }
 
 ####################################################################################
+# If anno == "yes", merge embeddings with 75 functional annotations,
+# then filter some columns and store 'extra_cols' for later use 
+####################################################################################
+if (anno == "yes") {
+  if ("GENEBASS_AF" %in% colnames(embedding_df)) {
+    embedding_df <- embedding_df %>% select(-height_FDR, -GENEBASS_AF)
+  }
+  train_df <- merge(train_df, embedding_df, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+  train_df <- merge(train_df, evo2_scores, by = "PLINK_SNP_NAME", all.x = TRUE) #  left join
+  extra_cols <- train_df %>% select(PLINK_SNP_NAME, GENEBASS_AF, LOF_DISRUPTIVE, `Gene.refGene`)
+  df <- dplyr::select(train_df, -PLINK_SNP_NAME, -`Gene.refGene`) 
+} else {
+  train_df <- embedding_df
+  extra_cols <- train_df %>% select(PLINK_SNP_NAME)
+  df <- dplyr::select(train_df, -PLINK_SNP_NAME) 
+}
+####################################################################################
 # Filter training matrix
 ####################################################################################
-
-# Subset to get columns for final prediction file 
-extra_cols <- train_df %>% select(PLINK_SNP_NAME, GENEBASS_AF, LOF_DISRUPTIVE, `Gene.refGene`)
-
-# Subset training data 
-df <- dplyr::select(train_df, -PLINK_SNP_NAME, -`Gene.refGene`) 
 
 # Keep RVs with MAF above the lower bound threshold 
 count_rows <- df %>% filter(GENEBASS_AF < as.numeric(AF)) %>% nrow()
@@ -200,33 +317,30 @@ cat("Number of GENEBASS RVs with MAF <", AF, "(lower thresh):", count_rows, "\n"
 df1 <- subset(df, GENEBASS_AF >= as.numeric(AF)) # Lower bound (4844229 - 2682377) = 2114607 x 76 
 df1 <- subset(df1, GENEBASS_AF < upper_MAF) # Upper-bound 
 
-print(head(df1[, 1:4]),3)
+cat("\ndf1:\n")
+print(head(df1[, 1:4]),2)
 cat("\n")
 
-X_df1 = df1[, -1] 
+if (!"height_FDR" %in% colnames(df1)) {
+    stop("Column 'height_FDR' not found in df1. Please check.")
+}
+X_df1 <- df1[, !colnames(df1) %in% "height_FDR"]
 y_df1 = df1[["height_FDR"]]
-cat("Training preds:\n\n")
-colnames(X_df1)
+cat(" X matrix after MAF >", AF, "removed:", dim(X_df1)[1], "x", dim(X_df1)[2], "\n")
+print(head(X_df1[, 1:4]),2)
+cat("\n y FDR:", length(y_df1), "x 1\n\n")  
+print(head(y_df1),3)
 cat("\n")
-cat("'X' matrix MAF >", AF, "removed:", dim(X_df1)[1], "x", dim(X_df1)[2], "\n")
-cat("'y FDR:", length(y_df1), "x 1\n")  
-cat("\n")
-print(head(X_df1,2))
-cat("\n")
-cat("----------------------------------------------------------\n\n")
 
 ####################################################################################
 # Load test matrix 
 ####################################################################################
+if (!file.exists(RData_file)) {
+
 # df <- as.data.frame(fread(predict_path, header = TRUE, showProgress = FALSE))
 df_pred <- df
-
 X_df_pred1 = df_pred[, -1] # 3mill x 92
-cat("\n")
-print(head(X_df_pred1,2))
-cat("\n")
 y = df_pred[["height_FDR"]]
-cat("----------------------------------------------------------\n\n")
 
 set.seed(42) # Set seed for reproducibility
 k <- 5
@@ -240,7 +354,8 @@ cv_mars_list <- list() # To store models for each fold
 start_time <- Sys.time()
 
 # 5-fold cross-validation loop
-cat("Training MARS for trial", trial_name, " with annocols=", anno, " (deg:", d, " np:", np," penalty:", p, ")\n")
+cat("Training MARS for ", trial_name, " with anno=", anno, " (d:", d, " np:", np," p:", p, ")\n")
+cat("pval_thresh :", pval_thresh, "\n")
 for (i in 1:k) {
     cat("=============== [ CV Fold", i, "of", k, "] =================\n\n")
 
@@ -289,8 +404,10 @@ fwrite(final_df, file=scores_file, sep = "\t", quote = FALSE)
 # Calculate duration
 end_time <- Sys.time()
 duration <- difftime(end_time, start_time, units = "mins")
-cat("------- Total Duration: ", round(duration, 2), " mins -------\n")
-
+cat("------- Duration: ", round(duration, 2), " mins -------\n")
+} else {
+    cat("\nRData file already exists. Loading it in...\n")
+}
 
 ####################################################################################
 # Plot variables
@@ -332,7 +449,7 @@ if (exists("cv_mars_list")) {
     
     for (i in 1:length(cv_mars_list)) {
     
-        cat("====================== Trial", trial_name, " model ", i, "=======================\n")
+        cat("========= Trial", trial_name, " model ", i, "=========\n")
         model <- cv_mars_list[[i]] 
         variable_importance <- evimp(model)
         preds_list <- rownames(variable_importance)

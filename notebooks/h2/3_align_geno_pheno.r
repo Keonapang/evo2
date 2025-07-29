@@ -17,19 +17,24 @@
 # trait="height"
 # DIR_CLUMP="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/RVPRS/0c_LD_CLUMP_LOF"
 # DIR_WORK="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/June30_h2/rovher_chr17_win4096_1000RV"
-# Rscript "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pang/Keona_scripts/RARity/exome_blk/3_align_geno_pheno_cont.r" $anno $trait $DIR_WORK $DIR_CLUMP
+# Rscript "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pang/Keona_scripts/RARity/exome_blk/3_align_geno_pheno_cont.r" $anno $trait $DIR_WORK $DIR_CLUMP $cores
 
 ############################################################################################
 args <- commandArgs(trailingOnly = TRUE)
-anno <- as.character(args[1]) # score_col
+anno <- as.character(args[1]) # anno_name, e.g. "yhat"
 trait <- as.character(args[2])
-DIR_WORK <- args[3] # DIR_WORK="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/June30_h2/chr${chr}_win${WIN}_${variant_subset}RV"
+DIR_WORK <- args[3] # DIR_WORK="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/h2/MARS/refvar/RovHer_chr17_MARS_d3_np150_nv0.1_lowerAF0e+00_annono_embedrefvar_blk28"
 DIR_CLUMP <- args[4]
+top <- as.character(args[5]) # "100" or 1,5,10....
+cores <- as.numeric(args[6]) # 20
 
 suppressMessages(library("data.table"))
 suppressMessages(library("dplyr"))
 suppressMessages(library("MBESS"))
 suppressMessages(library("corpcor")) #pseudoinverse
+suppressMessages(library("doParallel"))
+suppressMessages(library("parallel"))
+registerDoParallel(makeCluster(cores))
 
 total_start_time <- Sys.time()
 cat("\n")
@@ -44,10 +49,15 @@ cat("=========== SCRIPT 3: Align geno and pheno ===========\n\n")
 # INPUT DIRECTORIES
 ################################################################################
 
-# Get (un-unprocessed, unaligned) GENOTYPES that were from clumping pipeline  
-GENO_DIR <- paste0(DIR_CLUMP,"/8_GENO_0.1LD50kWIN_RDATA")
+# Get unaligned GENOTYPES from clumping pipeline  
+if (top == "100" || top == 100) {
+  GENO_DIR <- paste0(DIR_CLUMP,"/8_GENO_0.1LD50kWIN_RDATA") # from script "8_convert_to_RData.sh"
+} else {
+  GENO_DIR <- paste0(DIR_WORK,"/4_exome_h2/top",top, "/2_GENO_0.1LD50kWIN_RDATA") # from script "2_geno_blks.r"
+}
+
 cat("1. Genotypes :", GENO_DIR, "\n\n")
-if (!dir.exists(GENO_DIR) || length(list.files(GENO_DIR)) == 0) { # Check if GENO_DIR doesn't exist or is an empty directory
+if (!dir.exists(GENO_DIR) || length(list.files(GENO_DIR)) == 0) { # Check if GENO_DIR doesn't exist or is empty
   stop("Error: GENO_DIR does not exist or is empty")
 }
 
@@ -59,7 +69,14 @@ cat("2. Phenotype :", pheno_dir, "\n\n")
 # OUTPUT DIRECTORIES
 ################################################################################
 
-root <- paste0(DIR_WORK, "/4_exome_h2"); if (!dir.exists(root)) { dir.create(root)}
+root1 <- paste0(DIR_WORK, "/4_exome_h2");  if (!dir.exists(root1)) { dir.create(root1)}
+root <- paste0(root1, "/top",top); if (!dir.exists(root)) { dir.create(root)}
+cat("3. Output root :", root, "\n\n")
+
+# check to make sure output doesn't exist already
+if (!file.exists(paste0(root, "/4_", trait, "_H2_RESULTS/TOTAL_H2_", trait, "_exome.txt"))) {
+  stop("Output directory /H2_RESULTS already exists.\n\n")
+}
 
 # Create Output GENO and PHENO directories
 GENO_OUTDIR <- paste0(root,"/3_NORM_MAC2_GENO_0.1LD50kWIN_aligned_",trait); if (!dir.exists(GENO_OUTDIR)) { dir.create(GENO_OUTDIR)}
@@ -91,6 +108,10 @@ if (!file.exists(norm_df_path)) {
     stop("No files found in GENO_DIR:", GENO_DIR,"\n")
   }
   base::load(ref_geno)
+  if (exists("temp_GENO")) {
+    GENE_DF <- temp_GENO
+    rm(temp_GENO)
+  }
   cat("GENE_DF:", dim(GENE_DF)[1], "x", dim(GENE_DF)[2], "\n")
   colnames(GENE_DF)[1] <- "eid"
 
@@ -133,9 +154,9 @@ if (!file.exists(norm_df_path)) {
   if(identical_ordered && identical_nrow) {
     cat("--------'eid' in GENO and PHENO are aligned and number of rows match!----------\n")
   } else {
-    cat("The GENO and PHENO are not aligned or # of rows don't match.\n")
+    cat("GENO and PHENO are not aligned or # of rows don't match.\n")
     if(!identical_ordered) {
-      cat("The 'eid' values are not in the same order or is mismatched.\n")
+      stop("'eid' values are not in the same order or is mismatched.\n")
     }
     if(!identical_nrow) {
       cat("Rows in GENE_DF:", nrow(GENE_DF), "   PHENO:", nrow(PHENO), "\n")
@@ -240,6 +261,10 @@ if (file.exists(ref_geno)) {
   }
   start_time <- Sys.time()
   base::load(GENO_path)  # GENE_DF is loaded
+  if (exists("temp_GENO")) {
+    GENE_DF <- temp_GENO
+    rm(temp_GENO)
+  }
   setDT(GENE_DF)
   colnames(GENE_DF)[1] <- "eid"
 
@@ -289,6 +314,10 @@ for (chr in 1:22) {
       cat("======== SCRIPT 3:", anno, trait, "Chr", chr, "blk", sprintf("%02d", blk) ,"========\n")
       start_time <- Sys.time()
       base::load(GENO_path)  # GENE_DF is loaded
+      if (exists("temp_GENO")) {
+        GENE_DF <- temp_GENO
+        rm(temp_GENO)
+      }
       setDT(GENE_DF)
       colnames(GENE_DF)[1] <- "eid"
 
@@ -327,11 +356,10 @@ for (chr in 1:22) {
   } # Done looping through all blks for ONE chromosome
 } # Done looping through all chromosomes
 }
-
-cat("======== SCRIPT 3: Aligned geno and pheno matrices =========\n")
-cat("Number of variants in the last GENE_DF: ", ncols, "\n")
 end_time <- Sys.time()
 time_taken <- as.numeric(end_time - total_start_time, units = "mins")
 cat("Time:", round(time_taken, 2), "mins\n")
-cat("Start:", format(total_start_time, "%B %d %H:%M:%S"), "   End:", format(end_time, "%B %d %H:%M:%S"), "\n\n")
+cat("Start:", format(total_start_time, "%B %d %H:%M:%S"), "   End:", format(end_time, "%B %d %H:%M:%S"), "\n")
+
+cat("======== SCRIPT 3: Aligned geno and pheno matrices =========\n\n")
 

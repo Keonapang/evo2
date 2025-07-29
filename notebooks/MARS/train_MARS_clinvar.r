@@ -1,6 +1,7 @@
-# Train MARS using two genes (BRCA1 and LDLR) 
-# Adding Evo2 7B model embeddings to train set + 75 functional annotations from RovHer study 
 # June 26-30, 2025
+# Training MARS on 5 scenarios
+# Adding Evo2 7B model embeddings to train set + 75 functional annotations from RovHer study 
+# Dependent variable (prediction) is clinVar classification of variants in BRCA1/LDLR genes
 
 # Trial name scenarios:
 # A      Train on variants of both genes - 5 fold CV
@@ -9,7 +10,7 @@
 # D      Train on BRCA1, test on held-out set of BRCA1  - 5 fold CV
 # E      Train on LDLR, test on held-out set of LDLR  - 5 fold CV
 
-# trial_name="B C" # 
+# trial_name="B C" # A B C D E
 # d=3
 # np=2000 # Reducing nprune reduces exhaustive search time; maximum number of permissible terms in the final pruned model.
 # nv=0.1
@@ -18,7 +19,7 @@
 # anno_cols="yes"
 # embedding_cols="yes"
 # # nk (maximum number of  forward pass terms)
-
+# VAR_WIN="128"
 # for t in $trial_name; do
 #   Rscript /mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/MARS/train_MARS.r $AF $d $np $nv $t $anno_cols $embedding_cols $cores
 # done
@@ -41,58 +42,76 @@ AF <- as.numeric(args[1]) # 0.00003
 d <- as.numeric(args[2]) # 2 or 3
 np <- as.numeric(args[3]) # 11, 13, 14
 nv <- as.numeric(args[4]) # 0.1
-trial_name <- args[5] # "A", "B", "C"
+trial_name <- args[5] # "A", "B", "C", "D", "E", "BRCA1_DATA"
 anno <- args[6] # "yes", "no"
-embedding_col <- as.character(args[7]) # | "delta" (delta embeddings), "no" (no embeddings), "refvar" (ref + var embeddings)
+EMBED_COL <- as.character(args[7]) # | "delta" (delta embeddings), "no" (no embeddings), "refvar" (ref + var embeddings)
 blk <- as.character(args[8])
 cores <- as.numeric(args[9]) # "yes", "no"
-date <- format(Sys.Date(), "%Y%m%d")
-cat("date:", date, "\n")
+reverse <- as.character(args[10]) # "yes or "no" (to include reverse complement embeddings)
+VAR_WIN <- as.character(args[11]) # 8192, 4096, 2048, 1024, 512, 256, 128, 64
 # trial_name <- "A"
 # anno <- "yes"
 # d <- 3
 # np <- 2000
 # nv <- 0.1
 # AF <- 0
-# embedding_col <- "refvar"
+# EMBED_COL <- "refvar"
 # blk <- "28"
 # cores <- 24
+# reverse <- "yes"
+
+folder_name="July25_embedding" # MODIFY
+
+registerDoParallel(makeCluster(cores))
 upper_MAF <- 0.01
 p <-2
 t <- 0.00001
+date <- format(Sys.Date(), "%Y%m%d")
+cat("date:", date, "\n")
 
-registerDoParallel(makeCluster(cores))
+AF <- format(as.numeric(AF), scientific = TRUE, digits = 4)
+upper_MAF <- format(as.numeric(upper_MAF), scientific = TRUE, digits = 4)
 
 # Output model name
-upper_MAF <- format(as.numeric(upper_MAF), scientific = TRUE, digits = 4)
-AF <- format(as.numeric(AF), scientific = TRUE, digits = 4)
-
-if (embedding_col == "delta" || embedding_col == "refvar") {
-    model_name <- paste0(trial_name, "_MARS_d",d,"_np",np,"_nv", nv,"_lowerAF",AF,"_anno", anno, "_embed", embedding_col, "_blk", blk) 
-} else if (embedding_col == "no") {
-    model_name <- paste0(trial_name, "_MARS_d",d,"_np",np,"_nv", nv,"_lowerAF",AF,"_anno", anno, "_embed", embedding_col) 
+if (EMBED_COL == "delta" || EMBED_COL == "refvar") {
+    model_name <- paste0(trial_name, "_MARS_d",d,"_np",np,"_nv", nv,"_lowerAF",AF,"_VARWIN", VAR_WIN, "_blk", blk) 
+    if (reverse == "yes") {
+        model_name <- paste0(model_name,"_rev")
+    }
+} else if (EMBED_COL == "no") {
+    model_name <- paste0(trial_name, "_MARS_d",d,"_np",np,"_nv", nv,"_lowerAF",AF,"_anno", anno) 
 } else {
-    stop("Invalid 'embedding_col'. Must be either: delta, refvar, no")
+    stop("Invalid 'EMBED_COL'. Must be either: delta, refvar, no")
 }
 cat("Model name: ", model_name, "\n\n")
 
 # Input directory 
 server <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk"
-DIR_EVO2 <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/July1_embedding"
+DIR_EVO2 <- paste0(server,"/evo2/", folder_name)
 
 # Output directory
-ROOTDIR <- paste0("/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/MARS/",date, "_", embedding_col) # <------ MODIFY!
+# ROOTDIR <- paste0(server,"/evo2/MARS/",date, "_", EMBED_COL) # <------ MODIFY!
+ROOTDIR <- paste0(server,"/evo2/MARS/",folder_name) # <------ MODIFY!
 OUTDIR1 <- paste0(ROOTDIR,"/", trial_name)
-OUTDIR <- paste0(OUTDIR1,"/", model_name)
+OUTDIR2 <- paste0(OUTDIR1,"/", EMBED_COL) # delta, refvar, no
+OUTDIR <- paste0(OUTDIR2,"/anno", anno) # yes or no
+OUTDIR <- paste0(OUTDIR2,"/", model_name) # yes or no
 
 if (!dir.exists(ROOTDIR)) {dir.create(ROOTDIR, recursive = TRUE)}
 if (!dir.exists(OUTDIR1)) {dir.create(OUTDIR1, recursive = TRUE)}
+if (!dir.exists(OUTDIR2)) {dir.create(OUTDIR2, recursive = TRUE)}
 if (!dir.exists(OUTDIR)) {dir.create(OUTDIR, recursive = TRUE)}
 
 # Output files
-RData_file <- paste0(OUTDIR, "/", model_name, "_scores.RData")
-scores_file <- paste0(OUTDIR, "/", model_name, "_scores.txt")
-metrics_file <- paste0(OUTDIR, "/layer", blk, "_metrics.txt")
+RData_file <- paste0(OUTDIR, "/", model_name,".RData")
+scores_file <- paste0(OUTDIR, "/scores.txt")
+metrics_file <- paste0(OUTDIR1, "/AUC.txt")
+log_file_path <- paste0(OUTDIR, "/log.txt")
+
+# output plots
+auc_plot <- paste0(OUTDIR,"/auc.png")
+dot_plot <- paste0(OUTDIR,"/dot.png")
+dis_plot <- paste0(OUTDIR, "/scores.png")
 
 ####################################################################################
 # INPUT FILES
@@ -101,63 +120,23 @@ metrics_file <- paste0(OUTDIR, "/layer", blk, "_metrics.txt")
 train_path <- paste0(server, "/Training/height_FDR/genebass_AF001_chrall_vars_gene_final.txt")  # 4926639 x  80 
 
 # Evo2 scores
-DIR_EVO <- paste0("/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/June23")
+DIR_EVO <- paste0(server,"/evo2/June23")
 file_evo2a <- paste0(DIR_EVO, "/RovHer_BRCA1_win8192_seq812_all.xlsx")
 file_evo2b <- paste0(DIR_EVO, "/RovHer_LDLR_win4096_seq470_all.xlsx")
 
 # 2. csv file with embeddings
-csv1 <- paste0(DIR_EVO2,"/RovHer_BRCA1_blocks.", blk,".mlp.l3_delta.csv")
-csv2 <- paste0(DIR_EVO2,"/RovHer_LDLR_blocks.", blk,".mlp.l3_delta.csv")
-csv1_df <- fread(csv1, header = TRUE)
-csv2_df <- fread(csv2, header = TRUE)
-colnames(csv1_df) <- ifelse(grepl("^e", colnames(csv1_df)), 
-                            paste0(colnames(csv1_df), "_delta"), 
-                            colnames(csv1_df))
+csv1 <- paste0(DIR_EVO2,"/RovHer_BRCA1_blocks.", blk,".mlp.l3_VARWIN",VAR_WIN, "_delta.csv")
+csv1ref <- paste0(DIR_EVO2,"/RovHer_BRCA1_blocks.",blk,".mlp.l3_VARWIN",VAR_WIN, "_ref.csv")
+csv1var <- paste0(DIR_EVO2,"/RovHer_BRCA1_blocks.", blk,".mlp.l3_VARWIN",VAR_WIN, "_var.csv")
 
-colnames(csv2_df) <- ifelse(grepl("^e", colnames(csv2_df)), 
-                            paste0(colnames(csv2_df), "_delta"), 
-                            colnames(csv2_df))
+csv2 <- paste0(DIR_EVO2,"/RovHer_LDLR_blocks.", blk,".mlp.l3_VARWIN",VAR_WIN, "_delta.csv")
+csv2ref <- paste0(DIR_EVO2,"/RovHer_LDLR_blocks.",blk,".mlp.l3_VARWIN",VAR_WIN, "_ref.csv")
+csv2var <- paste0(DIR_EVO2,"/RovHer_LDLR_blocks.", blk,".mlp.l3_VARWIN",VAR_WIN, "_var.csv")
 
-csv1ref <- paste0(DIR_EVO2,"/RovHer_BRCA1_blocks.",blk,".mlp.l3_ref.csv")
-csv2ref <- paste0(DIR_EVO2,"/RovHer_LDLR_blocks.",blk,".mlp.l3_ref.csv")
-csv1ref_df <- fread(csv1ref, header = TRUE)
-csv2ref_df <- fread(csv2ref, header = TRUE)
-colnames(csv1ref_df) <-ifelse(grepl("^e", colnames(csv1ref_df)), 
-                            paste0(colnames(csv1ref_df), "_ref"), 
-                            colnames(csv1ref_df))
-
-colnames(csv2ref_df) <-ifelse(grepl("^e", colnames(csv2ref_df)), 
-                            paste0(colnames(csv2ref_df), "_ref"), 
-                            colnames(csv2ref_df))
-
-csv1var <- paste0(DIR_EVO2,"/RovHer_BRCA1_blocks.", blk,".mlp.l3_var.csv")
-csv2var <- paste0(DIR_EVO2,"/RovHer_LDLR_blocks.", blk,".mlp.l3_var.csv")
-csv1var_df <- fread(csv1var, header = TRUE)
-csv2var_df <- fread(csv2var, header = TRUE)
-colnames(csv1var_df) <-ifelse(grepl("^e", colnames(csv1var_df)), 
-                            paste0(colnames(csv1var_df), "_var"), 
-                            colnames(csv1var_df))
-colnames(csv2var_df) <-ifelse(grepl("^e", colnames(csv2var_df)), 
-                            paste0(colnames(csv2var_df), "_var"), 
-                            colnames(csv2var_df))
-
-
-# if column "layer" exists, remove it
-if ("layer" %in% colnames(csv1_df)) {
-  csv1_df <- csv1_df[, !("layer"), with = FALSE]
-}
-if ("layer" %in% colnames(csv2_df)) {
-  csv2_df <- csv2_df[, !("layer"), with = FALSE]
-}
-if ("region" %in% colnames(csv1_df)) {
-  setnames(csv1_df, old = "region", new = "input_file")
-}
-if ("region" %in% colnames(csv2_df)) {
-  setnames(csv2_df, old = "region", new = "input_file")
-}
-if (!all(colnames(csv1_df) == colnames(csv2_df))) {
-    stop("CSV files have different columns. Please check the input files.")
-}
+# reverse complement embeddings
+csv1_rev <- paste0(DIR_EVO2,"/RovHer_BRCA1_blocks.", blk,".mlp.l3_VARWIN",VAR_WIN, "_delta_rev.csv") 
+csv1ref_rev <- paste0(DIR_EVO2,"/RovHer_BRCA1_blocks.",blk,".mlp.l3_VARWIN",VAR_WIN, "_ref_rev.csv")
+csv1var_rev <- paste0(DIR_EVO2,"/RovHer_BRCA1_blocks.", blk,".mlp.l3_VARWIN",VAR_WIN, "_var_rev.csv")
 
 # 3. predict path
 predict_path <- train_path
@@ -167,11 +146,63 @@ ACMG_file1 <- paste0(server,"/RARity_monogenic_benchmark/BRCAexchange/BRCA1_clin
 ACMG_file2 <- paste0(server, "/RARity_monogenic_benchmark/LOVD_LDLR/LDLR_clinvar_curated.txt") # all British heart foundation-classified variants published on LOVD
 
 ####################################################################################
-# LOAD FILES
+# Load embeddings
 ####################################################################################
 
-# Load embedding columns
-if (embedding_col == "delta" || embedding_col == "no") {
+csv1_df <- fread(csv1, header = TRUE)
+csv1ref_df <- fread(csv1ref, header = TRUE)
+csv1var_df <- fread(csv1var, header = TRUE)
+# colnames(csv1_df) <- ifelse(grepl("^e", colnames(csv1_df)), paste0(colnames(csv1_df), "_delta"), colnames(csv1_df))
+# colnames(csv1ref_df) <-ifelse(grepl("^e", colnames(csv1ref_df)), paste0(colnames(csv1ref_df), "_ref"), colnames(csv1ref_df))
+# colnames(csv1var_df) <-ifelse(grepl("^e", colnames(csv1var_df)), paste0(colnames(csv1var_df), "_var"),  colnames(csv1var_df))
+
+if (file.exists(csv2)) {
+csv2_df <- fread(csv2, header = TRUE)
+csv2ref_df <- fread(csv2ref, header = TRUE)
+csv2var_df <- fread(csv2var, header = TRUE)
+# colnames(csv2_df) <- ifelse(grepl("^e", colnames(csv2_df)), paste0(colnames(csv2_df), "_delta"), colnames(csv2_df))
+# colnames(csv2ref_df) <-ifelse(grepl("^e", colnames(csv2ref_df)), paste0(colnames(csv2ref_df), "_ref"), colnames(csv2ref_df))
+# colnames(csv2var_df) <-ifelse(grepl("^e", colnames(csv2var_df)), paste0(colnames(csv2var_df), "_var"), colnames(csv2var_df))
+}
+
+# if column "layer" exists, remove it
+if ("layer" %in% colnames(csv1_df)) {csv1_df <- csv1_df[, !("layer"), with = FALSE]}
+if ("region" %in% colnames(csv1_df)) {setnames(csv1_df, old = "region", new = "input_file")}
+if (file.exists(csv2)) {
+if ("layer" %in% colnames(csv2_df)) { csv2_df <- csv2_df[, !("layer"), with = FALSE]}
+if ("region" %in% colnames(csv2_df)) {setnames(csv2_df, old = "region", new = "input_file")}
+if (!all(colnames(csv1_df) == colnames(csv2_df))) {stop("CSV files have different columns. Please check the input files.")}
+}
+
+# reverse complement embeddings
+if (reverse == "yes") {
+  cat("Adding reverse complement strand...\n")
+  csv1_df_rev <- fread(csv1_rev, header = TRUE)
+  csv1ref_df_rev <- fread(csv1ref_rev, header = TRUE)
+  csv1var_df_rev <- fread(csv1var_rev, header = TRUE)
+  # colnames(csv1_df_rev) <- ifelse(grepl("^e", colnames(csv1_df_rev)), paste0(colnames(csv1_df_rev), "_delta_rev"), colnames(csv1_df_rev))
+  # colnames(csv1ref_df_rev) <- ifelse(grepl("^e", colnames(csv1ref_df_rev)), paste0(colnames(csv1ref_df_rev), "_ref_rev"), colnames(csv1ref_df_rev))
+  # colnames(csv1var_df_rev) <- ifelse(grepl("^e", colnames(csv1var_df_rev)), paste0(colnames(csv1var_df_rev), "_var_rev"), colnames(csv1var_df_rev))
+
+  # Remove columns "input_file", "layer", "PLINK_SNP_NAME", "RovHer_score" from csv1_df_rev
+  columns_to_remove <- c("input_file", "layer", "PLINK_SNP_NAME", "RovHer_score")
+  csv1_df_rev <- csv1_df_rev[, !..columns_to_remove, with = FALSE] 
+  csv1ref_df_rev <- csv1ref_df_rev[, !..columns_to_remove, with = FALSE]
+  csv1var_df_rev <- csv1var_df_rev[, !..columns_to_remove, with = FALSE]
+  cat("csv1_df_rev:", dim(csv1_df_rev), "\n")
+
+  # join csv1_df_rev to the end of csv1_df column-wise
+  csv1_df <- cbind(csv1_df, csv1_df_rev)
+  csv1ref_df <- cbind(csv1ref_df, csv1ref_df_rev)
+  csv1var_df <- cbind(csv1var_df, csv1var_df_rev)
+  cat("csv1_df + reverse complement:", dim(csv1_df), "\n")
+}
+
+####################################################################################
+# Merge emebedding columns
+####################################################################################
+
+if (EMBED_COL == "delta" || EMBED_COL == "no") {
   if (trial_name == "A" || trial_name == "B" || trial_name == "C") {
       train_gene <- "BRCA1 and LDLR"
       test_gene <- "BRCA1 and LDLR"
@@ -192,7 +223,7 @@ if (embedding_col == "delta" || embedding_col == "no") {
   }
 }
 
-if (embedding_col == "refvar") {
+if (EMBED_COL == "refvar") {
   if (trial_name == "A" || trial_name == "B" || trial_name == "C") {
       train_gene <- "BRCA1 and LDLR"
       test_gene <- "BRCA1 and LDLR"
@@ -222,40 +253,49 @@ if (any(duplicated(colnames(embed_cols)))) {
     cat("No duplicate columns found in embed_cols.\n\n")
 }
 
-cat("embed_cols for", embedding_col, ":",dim(embed_cols), "\n\n")
+cat("embed_cols for", EMBED_COL, ":",dim(embed_cols), "\n\n")
 head(embed_cols[,1:5],2)
 cat("\n")
 
-#  dependent variable - scores
+####################################################################################
+# Load dependent variable - scores
+####################################################################################
 ACMG_col1 <- fread(ACMG_file1, header = TRUE, select = c("PLINK_SNP_NAME", "ACMG_final")) 
 ACMG_col1 <- rename(ACMG_col1, clinvar_clnsig = ACMG_final)
 ACMG_col2 <- fread(ACMG_file2, header = TRUE, select = c("PLINK_SNP_NAME", "clinvar_clnsig"))
 ACMG_cols <- rbind(ACMG_col1, ACMG_col2) 
 cat("ACMG_cols merged:",dim(ACMG_cols), "\n")
 
-# Load Evo2 delta likelihood scores
+####################################################################################
+# Load functional annotatinos + Evo2 delta likelihood scores
+####################################################################################
+
 data_evo2 <- rbind(read.xlsx(file_evo2a), read.xlsx(file_evo2b))
 data_evo2 <- data_evo2 %>% select(PLINK_SNP_NAME,evo2_delta_score)
 
-# 1. Build Training set, then add y-dependent variable (ClinVar classifications for each RV)
 anno_cols <- fread(train_path, header = TRUE)
 anno_cols <- merge(anno_cols, data_evo2, by = "PLINK_SNP_NAME", all.x = TRUE)
 cat("anno cols:\n\n")
 colnames(anno_cols)
 cat("\n")
 
-if (anno == "yes" && embedding_col == "delta" || anno == "yes" && embedding_col == "refvar") {
+####################################################################################
+# Compile/build final training dataset
+####################################################################################
+
+# 1. Build Training set, then add y-dependent variable (ClinVar classifications for each RV)
+if (anno == "yes" && EMBED_COL == "delta" || anno == "yes" && EMBED_COL == "refvar") {
     ("Loaded and merged annotation and embedding columns....\n")
     df <- merge(embed_cols, anno_cols, by = "PLINK_SNP_NAME", all.x = TRUE)
-} else if (anno == "no" && embedding_col == "delta" || anno == "no" && embedding_col == "refvar") {
+} else if (anno == "no" && EMBED_COL == "delta" || anno == "no" && EMBED_COL == "refvar") {
     ("Loaded embedding columns only....\n")
     anno_cols <- anno_cols[, .(PLINK_SNP_NAME, GENEBASS_AF, `Gene.refGene`)] # subset version
     df <- merge(embed_cols, anno_cols, by = "PLINK_SNP_NAME", all.x = TRUE)
-} else if (anno == "yes" && embedding_col == "no") {
+} else if (anno == "yes" && embed_cols == "no") {
     ("Loaded annotation columns only....\n")
     df <- anno_cols
 } else {
-    stop("Invalid combination of anno and embedding_col")
+    stop("Invalid combination of anno and EMBED_COL")
 }
 
 df <- merge(df, ACMG_cols, by = "PLINK_SNP_NAME", all.x = TRUE)
@@ -380,7 +420,6 @@ cat("\nPredicting on ", test_gene, "...\n\n")
 predictions <- predict(mars_model, newdata = X_df_pred1)
 
 # OUTPUT RESULTS
-cat("Saving predictions...\n\n")
 yhat_dataframe <- data.frame(yhat = as.numeric(predictions))
 final_df <- cbind(extra_cols, yhat_dataframe) # 3128762 x 4
 head(final_df,2)
@@ -407,7 +446,7 @@ all_predictions <- numeric(nrow(X_df_pred1))
 cv_mars_list <- list() # To store models for each fold
 
 # 5-fold cross-validation loop
-cat("Training MARS for trial", trial_name, " with annocols=", anno, " (deg:", d, " np:", np," penalty:", p, ")\n")
+cat("Training MARS for trial", trial_name, " with anno=", anno, " (d:", d, " np:", np," p:", p, ")\n")
 for (i in 1:k) {
     cat("=============== [ CV Fold", i, "of", k, "] =================\n\n")
 
@@ -578,7 +617,7 @@ if (exists("cv_mars_list")) {
             panel.grid.minor = element_blank(),
             panel.grid.major.y = element_blank()
         )
-        plot_file <- paste0(OUTDIR, "/", model_name, "_gcv_",i,".png")
+        plot_file <- paste0(OUTDIR, "/gcv_",i,".png")
         
         if (anno == "no") {
           ggsave(plot_file, plot = p, width = 14, height = 18, dpi = 300)
@@ -607,7 +646,7 @@ if (exists("cv_mars_list")) {
     variant_cols <- colnames(anno_cols)[1:48]
 
     plot_data$Category <- ifelse(
-        grepl("^e[0-9]+$", plot_data$Predictor),  # Predictors starting with "e" and ending with numbers
+        grepl("^e", plot_data$Predictor),  # Predictors starting with "e" and ending with numbers
         "Embeddings (Evo2 7B)",
         ifelse(
             plot_data$Predictor %in% gene_cols,    # Predictors in gene_cols
@@ -661,12 +700,12 @@ if (exists("cv_mars_list")) {
         panel.grid.minor = element_blank(),
         panel.grid.major.y = element_blank()
     )
-    plot_file <- paste0(OUTDIR, "/", model_name, "_gcv.png")
+    gcv_plot <- paste0(OUTDIR, "/gcv.png")
         
     if (anno == "no") {
-          ggsave(plot_file, plot = p, width = 14, height = 18, dpi = 300)
+          ggsave(gcv_plot, plot = p, width = 14, height = 18, dpi = 300)
     } else {
-          ggsave(plot_file, plot = p, width = 14, height = 8, dpi = 300)
+          ggsave(gcv_plot, plot = p, width = 14, height = 8, dpi = 300)
     }
 }
 
@@ -722,10 +761,7 @@ p <- ggplot() +
     legend.text = element_text(size = 20, margin = margin(b = 4, t = 4, l = 4, r = 4), family = font),  # Increase legend text size
     legend.title = element_blank()  # Remove legend title
   )
-plot_file <- paste0(OUTDIR, "/", model_name, "_scores.png")
-ggsave(plot_file, plot = p, width = 17, height = 6.5, dpi = 300)
-cat("File:", plot_file, "\n")
-
+ggsave(dis_plot, plot = p, width = 17, height = 6.5, dpi = 300)
 
 #################################################################################################
 # Plot ROC curve and calculate AUC
@@ -756,7 +792,7 @@ roc_data <- data.frame(
   FPR = rev(1 - roc_obj$specificities) # False Positive Rate (1 - Specificity)
 )
 
-auc_plot <- ggplot(roc_data, aes(x = FPR, y = TPR)) +
+p <- ggplot(roc_data, aes(x = FPR, y = TPR)) +
   geom_line(color = "black", size = 1.2) +  # ROC curve
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = red) +  # Random chance line
   annotate(
@@ -775,10 +811,7 @@ auc_plot <- ggplot(roc_data, aes(x = FPR, y = TPR)) +
   ) +
   theme_minimal() +
   plot_theme
-output_file <- paste0(OUTDIR,"/", model_name, "_auc.png")
-ggsave(output_file, auc_plot, width = 10, height = 6, dpi = 300)
-cat("Plot saved to:", output_file, "\n")
-
+ggsave(auc_plot, p, width = 10, height = 6, dpi = 300)
 
 ####################################################################################
 # PLOT: Distribution of Evo2 scores of two ClinVar classes (P and B)
@@ -822,20 +855,14 @@ plot <- ggplot(filtered_df, aes(x = y_df1, y = clinvar_clnsig, color = clinvar_c
   ) +
   theme_minimal() +  # Minimal theme
   plot_theme
-
-
-output_file <- paste0(OUTDIR,"/", model_name, "_dot.png")
-ggsave(output_file, plot, width = 10, height = 6, dpi = 300)
-cat("Plot saved to:", output_file, "\n")
+ggsave(dot_plot, plot, width = 10, height = 6, dpi = 300)
 
 
 ###############################################################################################
 # write README file (model summary and variables chosen)
 ###############################################################################################
 
-log_file_path <- paste0(OUTDIR, "/", model_name, "_log.txt")
 if (file.exists(RData_file)) load(RData_file) else cat("ERROR: MODEL", RData_file, "NOT FOUND.\n")
-cat("model_file: ", RData_file, "\n\n")
 final_df <- fread(scores_file)
 colnames(final_df)[ncol(final_df)] <- "y_df1"
 
@@ -861,8 +888,7 @@ if (exists("cv_mars_list")) {
     cat("\n")
     cat(format(model, style="C")) # new plot
     cat("\n")
-    cat("Min score:", min(final_df$y_df1, na.rm = TRUE), "\n")
-    cat("Max score:", max(final_df$y_df1, na.rm = TRUE), "\n\n")
+    cat("Min score:", min(final_df$y_df1, na.rm = TRUE), "   Max score:", max(final_df$y_df1, na.rm = TRUE), "\n\n")
     }
 } else {
     cat("=======================================", "no CV", "==============================================\n")
@@ -872,8 +898,7 @@ if (exists("cv_mars_list")) {
     cat("\n")
     cat(format(mars_model, style="C")) # new plot
     cat("\n")
-    cat("Min score:", min(final_df$y_df1, na.rm = TRUE), "\n")
-    cat("Max score:", max(final_df$y_df1, na.rm = TRUE), "\n\n")
+    cat("Min:", min(final_df$y_df1, na.rm = TRUE), "  Max:", max(final_df$y_df1, na.rm = TRUE), "\n\n")
 }
 sink() # Close the file
 cat("\nLog:", log_file_path, "\n\n")
@@ -883,34 +908,43 @@ cat("\nLog:", log_file_path, "\n\n")
 # Write metrics file in excel to save AUROC
 ###############################################################################################
 
-initialize_metrics_file <- function(file_path) {
-  metrics_csv <- file_path
-    columns <- c(
-    "MODEL_SIZE", "input_file", "subset_method", "USE_RANDOM_SEED", 
-    "SEQ_LENGTH", "WINDOW_SIZE", "time_score_ref", "time_score_var", "AUROC"
-  )
-    if (!file.exists(metrics_csv)) {
-    df <- tibble::tibble(!!!setNames(vector("list", length(columns)), columns))
-    readr::write_csv(df, metrics_csv)
+initialize_metrics_file <- function(file_path, columns) {
+  if (!file.exists(file_path)) {
+    df <- as.data.frame(matrix(ncol = length(columns), nrow = 0))
+    colnames(df) <- columns
+    write.csv(df, file_path, row.names = FALSE)
+    cat(sprintf("Initialized metrics file with headers: %s\n", file_path))
   }
-  return(metrics_csv)
 }
 
-append_metrics_row <- function(metrics_file, row_data) {
-  df_csv <- readr::read_csv(metrics_file, show_col_types = FALSE)
-  new_row <- tibble::tibble(row_data)
-  updated_df <- dplyr::bind_rows(df_csv, new_row)
-  readr::write_csv(updated_df, metrics_file)
+append_metrics_row <- function(file_path, row_data) {
+  df_csv <- read.csv(file_path, stringsAsFactors = FALSE)
+  new_row <- as.data.frame(row_data, stringsAsFactors = FALSE)
+  updated_df <- rbind(df_csv, new_row)
+  write.csv(updated_df, file_path, row.names = FALSE)
+  cat(sprintf("Appended new row to metrics file: %s\n", file_path))
 }
 
-metrics_file <- initialize_metrics_file(metrics_file)
+columns <- c(
+  "TRIAL_NAME", "embed_cols", "reverse", "anno",
+  "LAYER", "nv", "AF", 
+  "AUROC", "model_name"
+)
+initialize_metrics_file(metrics_file, columns)
 new_row <- list(
   TRIAL_NAME = trial_name,
+  embed_cols = embed_cols,
+  reverse = reverse,
+  anno = anno,
   LAYER = blk,
   nv = nv,
   AF = AF,
   AUROC = auc_value,
   model_name = model_name
 )
+
+# Append the new row to the metrics file
 append_metrics_row(metrics_file, new_row)
-cat(sprintf("Metrics appended to %s.\n\n", metrics_file))
+cat("\n ---------- Trained MARS using ClinVar labels ---------\n")
+cat("RESULTS:", OUTDIR, "\n\n")
+cat("AUROC:", AUROC, "\n\n")

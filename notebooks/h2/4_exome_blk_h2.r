@@ -23,17 +23,21 @@ rm(list = ls())
 gc()
 
 args <- commandArgs(trailingOnly = TRUE)
-anno <- as.character(args[1]) # score_col
+anno <- as.character(args[1]) 
 trait <- as.character(args[2])
-threads <- as.numeric(args[3])
+threads <- as.numeric(args[3]) 
 DIR_WORK <- args[4]
+top <- as.numeric(args[5]) 
+
+# top <- "100"
+# DIR_WORK <- "/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/h2/MARS/delta/RovHer_chr17_MARS_d3_np200_nv0.1_lowerAF0e+00_annoyes_embeddelta_blk28"
+# trait <- "alanine_aminotransferase"
+# threads <- 10 
+# anno <- "yhat" # yhat, delta, refvar
 
 if (is.na(threads) || threads <= 0) {
   stop("Error: 'threads' must be a valid positive number.")
 }
-
-lmutils::set_core_parallelism(threads)
-lmutils::set_num_worker_threads(threads)
 
 # install.packages("https://github.com/mrvillage/lmutils.r/archive/refs/heads/master.tar.gz", repos=NULL) # use .zip for Windows
 suppressMessages(library("data.table"))
@@ -41,27 +45,28 @@ suppressMessages(library("lmutils"))
 suppressMessages(library("dplyr"))
 suppressMessages(library("MBESS"))
 suppressMessages(library("corpcor")) #pseudoinverse
-cat("\n")
 
-cat("=========== SCRIPT 4: Exome-wide h2 RV for", trait, "===========\n")
+cat("\n=========== SCRIPT 4: Exome-wide h2 RV for", trait, "===========\n")
 start_time <- Sys.time()
 cat("START:", format(start_time, "%B %d %H:%M:%S"), "\n\n")
 
 ################################################################################
 # INPUT
 ################################################################################
-root <- paste0(DIR_WORK, "/4_exome_h2"); if (!dir.exists(root)) { dir.create(root)}
+root1 <- paste0(DIR_WORK, "/4_exome_h2")
+root <- paste0(root1, "/top",top)
+cat("1. Output root :", root, "\n\n")
 
 # GENO and PHENO directories
 GENO_DIR <- paste0(root, "/3_NORM_MAC2_GENO_0.1LD50kWIN_aligned_",trait)
 PHENO_DIR <- paste0(root, "/3_PHENO_aligned_",trait)
 if (!file.exists(GENO_DIR) || length(list.files(GENO_DIR))==0) { 
-  cat("GENO_DIR:", GENO_DIR, "\n")
-  stop("ERROR: Geno directory missing\n")
+  cat("2. GENO_DIR:", GENO_DIR, "\n\n")
+  stop("Geno dir missing\n")
 }
 if (!file.exists(PHENO_DIR) || length(list.files(PHENO_DIR)) == 0) { 
-  cat("PHENO_DIR:", PHENO_DIR, "\n")
-  stop(ERROR: "pheno directory missing\n")
+  cat("3. PHENO_DIR:", PHENO_DIR, "\n\n")
+  stop("Pheno dir missing\n")
 }
 # Input files
 norm_df_path <- paste0(PHENO_DIR,"/PHENOS_",trait,"_BRIT_NONBRIT_IMPUTED_aligned_QNORM_RESID_COVAR_normz.RData") 
@@ -79,6 +84,9 @@ setwd(H2_RESULTS)
 outfile1 <- paste0(H2_RESULTS, trait, "_H2_exome_raw.txt") 
 outfile2 <- paste0(H2_RESULTS, trait, "_H2_exome_raw_processed.txt")
 outfile3 <- paste0(H2_RESULTS, "TOTAL_H2_", trait, "_exome.txt")
+if (file.exists(outfile3)) {
+  stop(paste("\n\nOutput already exists: ", outfile3, "\n\n"))
+}
 
 ################################################################################
 #  1.  Load Phenotype and configure the file
@@ -90,11 +98,19 @@ norm_df <-as.matrix(norm_df[,-1]) # 173599 x 1 (remove eid column)
 base::save(norm_df, file=norm_df_path_no_eid)
 } else {
   base::load(norm_df_path_no_eid) # norm_df object
-  cat("norm_df loaded from:", norm_df_path_no_eid, "\n")
+  cat("\nnorm_df :", norm_df_path_no_eid, "\n")
 }
 
 ################################################################################
-# 2. Count the genotype data
+# 2. Count the number of genotype data
+################################################################################
+list_of_geno <- list.files(GENO_DIR, pattern = "\\.rkyv\\.gz$", full.names = TRUE) 
+rkyv_count <- length(list_of_geno)
+list_of_rdata <- list.files(GENO_DIR, pattern = "\\.RData$", full.names = TRUE)
+rdata_count <- length(list_of_rdata)
+
+################################################################################
+# 3. Calculate h2 
 ################################################################################
 
 get_timestamp <- function() {
@@ -102,25 +118,15 @@ get_timestamp <- function() {
 }
 start_time <- Sys.time()
 
-# Count number of .rkyv.gz and .RData files 
-list_of_geno <- list.files(GENO_DIR, pattern = "\\.rkyv\\.gz$", full.names = TRUE) 
-rkyv_count <- length(list_of_geno)
-rdata_files <- list.files(GENO_DIR, pattern = "\\.RData$", full.names = TRUE)
-rdata_count <- length(rdata_files)
+cat("=========== [ SCRIPT 4 :", anno, trait, "h2 RV] ==========","\n\n")                       
 
-################################################################################
-# 3. Calculate h2 
-################################################################################
-
-cat("========= [ SCRIPT 4 :", anno, trait, "h2 RV] ========","\n\n")                       
-
-if (rkyv_count == rdata_count) {
-  cat("CALCULATING h2... \n")
+if (rdata_count > 0) {
+  cat("\nCALCULATING h2 for", rdata_count, " RData files... \n")
 
   lmutils::set_core_parallelism(threads)
   lmutils::set_num_worker_threads(threads)
   lmutils::set_num_main_threads(threads) #  default 16; number of main threads to use - number of primary operations to run in parallel.
-  results <- lmutils::calculate_r2(list_of_geno, norm_df)
+  results <- lmutils::calculate_r2(list_of_rdata, norm_df)
   cat("Results: ", paste(dim(results), collapse = " x "), "\n")
     #  block  n       m          r2           adj_r2
     #  1      50      5000    0.05972631     2.233549e-03
@@ -132,7 +138,6 @@ if (rkyv_count == rdata_count) {
   valid_data <- grepl("CHR_[0-9]+_[0-9]+", results_subset$data)
 
   if (all(valid_data)) {
-    # Only proceed if all rows in "data" column have the expected format
     cat("All file paths are valid. Truncating and rearranging...\n")
     
     # Truncate the filepath in column "data" to keep only chr # and blk #
@@ -150,7 +155,7 @@ if (rkyv_count == rdata_count) {
 }
 
 write.table(results_subset, file = outfile1, append = F, quote = F, row.names = F, col.names = T, sep = "\t")
-cat(paste("Output1: ", outfile1, "\n"))
+cat(paste("Output1: ", outfile1, "\n\n"))
 
 ################################################################################
 # 4. Calculate CIs, block_LCL_R2, block_UCL_R2 adj_R2_perVar, block_VarR2, block_Var_adj_R2
@@ -161,9 +166,10 @@ for (i in seq_len(nrow(results_subset))) {
   adj_r2 <- as.numeric(results_subset$adj_r2[i])
   n <- as.numeric(results_subset$n[i])
   m <- as.numeric(results_subset$m[i])
+
   # Check for NA values or unexpected range (example range check shown, adjust as needed)
   if(is.na(r2) || is.na(adj_r2) || is.na(n) || is.na(m) || n <= m || m <= 0) {
-    next # Skip  if any value is NA or if n <= m or m <= 0
+    next 
   }
   ci_output <- ci.R2(r2, df.1 = m, df.2 = n - m, conf.level = 0.95)
   results_subset$block_LCL_R2[i] <- ci_output$Lower.Conf.Limit.R2
@@ -176,11 +182,10 @@ for (i in seq_len(nrow(results_subset))) {
 }
 results_subset$trait <- trait
 results_subset <- results_subset[, c("trait", setdiff(names(results_subset), "trait"))]
-print(head(results_subset,1))
 
 # save 
 write.table(results_subset, file = outfile2, row.names = F, quote = F, sep = "\t")
-cat(paste("\nOutput all blocks: ", outfile2, "\n\n"))
+cat(paste("\nOutput blocks: ", outfile2, "\n\n"))
 
 #################################################################################
 #   5. Total h2 calculation for single-trait
@@ -212,33 +217,29 @@ if (!file.exists(outfile3)) {
     suppressWarnings(write.table(data_to_write, file = outfile3, append = T, quote = F,
                                 row.names = F, col.names = output_headers, sep = "\t"))
 	} else {
-    cat(paste("Appending to: ", outfile3, "\n\n"))
+    cat(paste("Appending: ", outfile3, "\n\n"))
     suppressWarnings(write.table(data_to_write, file = outfile3, append = T, quote = F,
                                 row.names = F, col.names = F, sep = "\t"))
 }
-cat("h2 for", trait, ":", ADJ_R2, "\n")
-cat("RVs (m):", N_RVs, "     Participants (n):", N, "\n\n")
-
-cat("========= SCRIPT 5:", anno, trait, "complete =======\n")
-
 end_time <- Sys.time()
 duration <- difftime(end_time, start_time, units = "mins")
-cat("Duration: ", round(duration), " mins\n")  
-cat("Start:", format(start_time, "%B %d %H:%M:%S"), "    End:", format(end_time, "%B %d %H:%M:%S"), "\n")
+
+cat(trait, "h2: ", ADJ_R2, "\n")
+cat("RVs (m):", N_RVs, "     Participants (n):", N, "\n\n")
+cat("Duration:", round(duration), "mins      End:", format(end_time, "%B %d %H:%M:%S"), "\n")
+cat("========= SCRIPT 5:", anno, trait, " =======\n\n")
+cat("DIR_WORK:", DIR_WORK, "\n")
 
 #################################################################################
 # 6. CLEAN UP: all .RData files from dir
 #################################################################################
-setwd(H2_RESULTS) 
 
 final_result <- fread(outfile3, header = TRUE, sep = "\t")
 if (!is.null(final_result) && ncol(final_result) > 0 && nrow(final_result) > 0 && all(!is.na(final_result))) {
   unlink(GENO_DIR, recursive = TRUE)
   unlink(PHENO_DIR, recursive = TRUE)
   file.remove(outfile1)
-  cat("RData and rkyv.gz removed successfully.\n\n")
 } else {
-  cat("ERROR: Number of .rkyv.gz files does not match number of .RData files.\n")
-  cat("Number of .RData:", rdata_count, "   Number of .rkyv.gz:", rkyv_count, "\n\n")
+  cat("Number of .RData:", rdata_count, "\n\n")
   cat("GENO_DIR:", GENO_DIR, "\n\n")
 }

@@ -1,5 +1,5 @@
 # Train an artifical neural network for supervised classification of BRCA1 variants using Evo2 embedding
-# July 20, 2025
+# July 25, 2025
 # Purpose: 
         # 1. Can we replicate the evo2 analysis, achieving the same AUC
         # 2. Compare bewteen delta and refvar embedding concatenation methods
@@ -79,15 +79,13 @@ LAYER = args.LAYER
 COMBO = args.COMBO
 y_label = args.Y_LABEL
 i=args.i
-VAR_WIN = args.VAR_WIN
-
 # REGION = "BRCA1_DATA" # BRCA1_DATA, RovHer_BRCA1 or RovHer_LDLR, "both" (BRCA1 + LDLR RVs)
 # LAYER="blocks.28.mlp.l3"
 # COMBO="refvar" # delta, refvar
 # y_label="clinvar" # clinvar (0, 0.25, 0.5, 0.75,1); class (LOF, FUNC/INT)
 
 # Input Directories
-INPUT_DIR = Path("/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/June25_embedding")
+INPUT_DIR = Path("/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/July1_embedding")
 INPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Input data: 
