@@ -89,11 +89,11 @@ print(f"run_evo2_rovher.py  -input_file {input_file} -WINDOW_SIZE {WINDOW_SIZE} 
 
 # Output file, each row (variant) has a Evo2 delta-likelihood score 
 if subset_method == "row":
-    excel_file = f"{input_name}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}{row_num}.xlsx"
+    excel_file = f"{input_name}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}{row_num}.csv"
 elif subset_method == "all":
-    excel_file = f"{input_name}_win{WINDOW_SIZE}_{subset_method}.xlsx"
+    excel_file = f"{input_name}_win{WINDOW_SIZE}_{subset_method}.csv"
 else:
-    excel_file = f"{input_name}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}.xlsx"
+    excel_file = f"{input_name}_win{WINDOW_SIZE}_seq{SEQ_LENGTH}_{subset_method}.csv"
 
 ########################################################################
 # Define functions 
@@ -555,11 +555,14 @@ if "class" in data.columns:
 else :
     auroc="NA"
 
+# Save score results
+data.to_csv(csv_file, index=False)
+
 ############################################################
 # Append results to metrics.xlsx
 ############################################################
 
-data.to_excel(excel_file, index=False)
+
 metrics_file = initialize_metrics_file()
 new_row = {
     "MODEL_SIZE": MODEL_SIZE,

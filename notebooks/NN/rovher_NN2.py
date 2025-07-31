@@ -40,9 +40,12 @@
 # $model $REGION $y_layer $EMBED_COL $folder_name $anno $VAR_WIN $reverse
 
 ##############################################################################################
+
+folder_name="July30_embedding"  # MODIFY
+chromosome="17"  # change this to any chromosome, or write "all" (use all chr in analyses)
+
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 import sys
 import argparse
 import glob
@@ -59,6 +62,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
+from sklearn.preprocessing import MinMaxScaler
 
 import tensorflow as tf
 from tensorflow import keras
@@ -109,26 +113,21 @@ VAR_WIN = args.VAR_WIN
 # i=1
 # VAR_WIN="128"
 
-folder_name="July25_embedding"  # MODIFY
-
 # Input Directories
 server="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk"
-INPUT_DIR = Path(f"{server}/evo2/{folder_name}")
+INPUT_DIR = Path(f"{server}/evo2/July25_embedding")
 INPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # Input training variants + labels  
 if REGION == "BRCA1_DATA":
     file = "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/data/BRCA1_DATA.xlsx" # training variants + labels
-elif REGION == "RovHer_BRCA1" or REGION == "RovHer_LDLR":
+if REGION == "RovHer_BRCA1" or REGION == "RovHer_LDLR":
     label_file1 = f"{server}/RARity_monogenic_benchmark/BRCAexchange/BRCA1_clinvar_cleaned.txt" 
     label_file2 = f"{server}/RARity_monogenic_benchmark/LOVD_LDLR/LDLR_clinvar_curated.txt" # British heart foundation-classified variants on LOVD
-elif "FDR" in y_label:
-    DIR_LABEL=f"{server}/Training/{y_label}" # old folder (no cross validation): allvar_predict_saved_models_NO_GENESETS 
+if "FDR" in y_label:
     INPUT_DIR=f"{server}/evo2/July20_embedding"
-    label_file=f"{DIR_LABEL}/genebass_AF001_chrall_vars_gene_final.txt"
-    rovher_file=f"{DIR_LABEL}/GENEBASS_RV_train_RV_pred_Oct10/cv_MARS_d3_np15_nv0.1_lowerAF3e-05_upperAF1e-02_PLINK_AF_LOF_yhat.txt"
-else:
-    raise ValueError("Invalid REGION specified. Choose from: BRCA1_DATA, RovHer_BRCA1, RovHer_LDLR, or a chr region (e.g., chr1).")
+    anno_file=f"{server}/Training/height_FDR/genebass_AF001_chrall_vars_gene_final.txt"
+    rovher_file=f"{server}/Training/{y_label}/GENEBASS_RV_train_RV_pred_Oct10/cv_MARS_d3_np15_nv0.1_lowerAF3e-05_upperAF1e-02_PLINK_AF_LOF_yhat.txt"
 
 # Input embedding files: 
 delta_file = f"{INPUT_DIR}/{REGION}_{LAYER}_VARWIN{VAR_WIN}_delta.csv"
@@ -137,14 +136,6 @@ ref_file = f"{INPUT_DIR}/{REGION}_{LAYER}_VARWIN{VAR_WIN}_ref.csv"
 var_file = f"{INPUT_DIR}/{REGION}_{LAYER}_VARWIN{VAR_WIN}_var.csv"
 ref_rev_file = f"{INPUT_DIR}/{REGION}_{LAYER}_VARWIN{VAR_WIN}_ref_rev.csv"
 var_rev_file = f"{INPUT_DIR}/{REGION}_{LAYER}_VARWIN{VAR_WIN}_var_rev.csv"
-
-# Error check
-if not os.path.exists(var_file):
-    print(f"\nMISSING data from layer {LAYER} and VAR_WIN {VAR_WIN}\n")
-    print(f"var_file: {var_file}\n")
-    print(f"\nCheck dir: {INPUT_DIR}\n")
-    print(f"\n================ Terminated ===============\n")
-    sys.exit(1)
 
 # Input Embedding files
 if REGION == "both":
@@ -164,6 +155,7 @@ if "FDR" in y_label:
     ROOTDIR = Path(f"{server}/evo2/NN/RovHer")
 else:
     ROOTDIR = Path(f"{server}/evo2/NN/{folder_name}")
+
 OUTPUT_DIR1 = Path(f"{ROOTDIR}/{y_label}") # height_FDR, clinvar, class
 OUTPUT_DIR2 = Path(f"{OUTPUT_DIR1}/{EMBED_COLS}")  # delta, refvar, no
 OUTPUT_DIR = Path(f"{OUTPUT_DIR2}/anno{ANNO_COLS}") # yes or no
@@ -182,12 +174,6 @@ else:
 plot3 = f"{OUTPUT_DIR}/{REGION}_{LAYER}_VARWIN{VAR_WIN}_scatter.png"
 score_file = f"{OUTPUT_DIR}/{REGION}_{LAYER}_VARWIN{VAR_WIN}.txt"
 README_file = f"{OUTPUT_DIR}/{REGION}_{LAYER}_VARWIN{VAR_WIN}_README.txt"
-
-# if score_file already exists,
-if os.path.exists(score_file):
-    print(f"\n{score_file} already exists. Exiting...\n")
-    print(f"\n================ Terminated ===============\n")
-    sys.exit(1)
 
 metrics_file = f"{ROOTDIR}/{REGION}_VARWIN{VAR_WIN}_{y_label}_ANNO{ANNO_COLS}_AUC.csv"
 
@@ -288,7 +274,7 @@ def recode_clinvar(value):
     return mapping.get(value, 0.5)
 
 #######################################################
-# Load training labels
+# Load variant data + training labels
 #######################################################
 
 recode_map = {
@@ -303,7 +289,9 @@ recode_map = {
 }
 
 # 1. Variant data + ClinVar labels 
+
 print(f"Loading training labels (", y_label, ")...\n")
+
 if REGION == "BRCA1_DATA":
     data = pd.read_excel(file, header=2)
     data = data[['chromosome', 'position (hg19)', 'reference', 'alt','func.class', 'clinvar',]]
@@ -316,7 +304,7 @@ if REGION == "BRCA1_DATA":
     data['class'] = data['class'].replace(['FUNC', 'INT'], 'FUNC/INT')
     data['class'] = data['class'].replace({'FUNC/INT': 0, 'LOF': 1})
     # print number of values that are 1
-    print("Counts of FUNC/INT (0) and LoF (1) values:")   
+    print("Counts of FUNC/INT vs LoF:")   
     print(data['class'].value_counts())
     print("")
     # Create new column 
@@ -327,13 +315,20 @@ if REGION == "BRCA1_DATA":
     data = data.drop(columns=['chrom', 'pos', 'ref', 'alt'])
     # Recode `clinvar` column
     data['clinvar'] = data['clinvar'].replace(recode_map)
-    unique_clinvar_values = data['clinvar'].unique()
-    print("Clinvar values: ", unique_clinvar_values)
-    print("")
+
     NROWS=data.shape[0]
     if y_label == "clinvar":
         data = data[data['clinvar'] != "NA"]
         print("\nAfter removing NA in clinvar:", data.shape)
+
+    # load hg19 notation
+    # hg19_file=f"{server}/10_ukb_200k_wes.chrall.all_protein_altering.af_0.01.annotated.final.v2.txt.gz"
+    # hg19_data = pd.read_csv(hg19_file, usecols=["hg19_Start", "PLINK_SNP_NAME"])
+    # hg19_data['PLINK_SNP_NAME_hg19'] = hg19_data.apply(
+    #         lambda row: f"{row['hg38_Chr']}:{row['hg19_Start']}:{row['hg38_Ref']}:{row['hg38_Alt']}", axis=1
+    # )
+    # data = pd.merge(data, hg19_data, on="PLINK_SNP_NAME", how="left")
+
 
 if REGION == "RovHer_BRCA1" or REGION == "RovHer_LDLR":
     # BRCA1
@@ -362,95 +357,128 @@ if REGION == "RovHer_BRCA1" or REGION == "RovHer_LDLR":
         data["clinvar"] = data["clinvar"].apply(recode_clinvar)
         print(data["clinvar"].value_counts(dropna=False))
 
+        unique_clinvar_values = data['clinvar'].unique()
+        print("Clinvar values: ", unique_clinvar_values)
+        print("")
+
 if "FDR" in y_label:
-    print(f"\nLoading {y_label} and 75 functional annotations...\n")
-    data = pd.read_table(label_file, sep="\s+")
-
     print(f"Loading RovHer scores...\n")
-    score_df = pd.read_csv(rovher_file, sep="\t", usecols=["PLINK_SNP_NAME", "yhat"])
-    score_df.rename(columns={"yhat": "rovher_score"}, inplace=True)
-    data = pd.merge(data, score_df, on="PLINK_SNP_NAME", how="left")
+    data = pd.read_csv(rovher_file, sep="\t", usecols=["PLINK_SNP_NAME", "yhat"])
+    data.rename(columns={"yhat": "rovher_score"}, inplace=True)
     print("")
-    # Subset to chr17 rows
-    data = data[data['PLINK_SNP_NAME'].str.startswith("17:")]
-    NROWS=data.shape[0]
 
+    # Filtering by chromosome (if needed)
+    if chromosome != "all":
+        print(f"Filtering data for chromosome {chromosome}...\n")
+        data = data[data['PLINK_SNP_NAME'].str.startswith(f"{chromosome}:")]
+    else:
+        print("Using all chromosomes in the data.")
+    NROWS=data.shape[0]
 
 # Check for duplicates
 data = data[~data['PLINK_SNP_NAME'].duplicated(keep='first')]
 
 #######################################################
+# Loaded 75 functional annotations (if needed)
+#######################################################
+
+if ANNO_COLS == "yes":   
+    print(f"Merging {y_label} labels with 75 functional annotations...\n")
+    anno_file=f"{server}/Training/height_FDR/genebass_AF001_chrall_vars_gene_final.txt"
+    anno_data = pd.read_table(anno_file, sep="\s+") # height-FDR and 75 functional annotations
+    
+    data = pd.merge(data, anno_data, on="PLINK_SNP_NAME", how="left")
+    print("data:", data.shape)
+    print(data.head())
+    print("")
+
+# Check for NA
+if data.isnull().values.any():
+    na_count = data.isnull().sum().sum()
+    print(f"\nThere are {na_count} rows with NA values in the data.")
+    data = data.dropna().reset_index(drop=True)
+    print(f"Data shape after removing NAs: {data.shape}")
+
+#######################################################
 # Load embeddings (+ reverse complement if available)
 #######################################################
 
+if EMBED_COLS not in ["embedno", "no"]:
+    if not os.path.exists(var_file):
+        print(f"\nMISSING data from layer {LAYER} and VAR_WIN {VAR_WIN}\n")
+        print(f"var_file: {var_file}\n")
+        print(f"\nCheck dir: {INPUT_DIR}\n")
+        print(f"\n================ Terminated ===============\n")
+        sys.exit(1)
+
 if EMBED_COLS == "delta":
-        print("\nLoading delta embeddings...")
-        delta = pd.read_csv(delta_file)
-        if os.path.exists(delta_rev_file):
-            print("Loading delta reverse complement embeddings...\n")
-            delta_reverse = pd.read_csv(delta_rev_file)
+    print("\nLoading delta embeddings...")
+    delta = pd.read_csv(delta_file)
+    if os.path.exists(delta_rev_file):
+        print("Loading delta reverse complement embeddings...\n")
+        delta_reverse = pd.read_csv(delta_rev_file)
 
 if EMBED_COLS == "refvar":
-        if REGION == "both":
-            var1 = pd.read_csv(var_file1)
-            var_reverse1 = pd.read_csv(var_rev_file1)
-            ref1 = pd.read_csv(ref_file1)
-            ref_reverse1 = pd.read_csv(ref_rev_file1)
-            var2 = pd.read_csv(var_file2)
-            var_reverse2 = pd.read_csv(var_rev_file2)
-            ref2 = pd.read_csv(ref_file2)
-            ref_reverse2 = pd.read_csv(ref_rev_file2)
-            var = pd.concat([var1, var2], ignore_index=True)
-            var_reverse = pd.concat([var_reverse1, var_reverse2], ignore_index=True)
-            ref = pd.concat([ref1, ref2], ignore_index=True)
-            ref_reverse = pd.concat([ref_reverse1, ref_reverse2], ignore_index=True)
-        else:
-            print("Loading ref + var embeddings...\n")
-            chunk_size = 10000
-            chunks = []
-            for chunk in tqdm(pd.read_csv(var_file, chunksize=chunk_size), desc="Progress", unit="rows"):
-                chunks.append(chunk)
-            var = pd.concat(chunks, ignore_index=True)
-            chunks = []
-            for chunk in tqdm(pd.read_csv(ref_file, chunksize=chunk_size), desc="Progress", unit="rows"):
-                chunks.append(chunk)
-            ref = pd.concat(chunks, ignore_index=True)
-            if os.path.exists(var_rev_file) and os.path.exists(ref_rev_file):
-                print("\nLoading reverse complement embeddings...\n")
-                var_reverse = pd.read_csv(var_rev_file)
-                ref_reverse = pd.read_csv(ref_rev_file)
+    if REGION == "both":
+        var1 = pd.read_csv(var_file1)
+        var_reverse1 = pd.read_csv(var_rev_file1)
+        ref1 = pd.read_csv(ref_file1)
+        ref_reverse1 = pd.read_csv(ref_rev_file1)
+        var2 = pd.read_csv(var_file2)
+        var_reverse2 = pd.read_csv(var_rev_file2)
+        ref2 = pd.read_csv(ref_file2)
+        ref_reverse2 = pd.read_csv(ref_rev_file2)
+        var = pd.concat([var1, var2], ignore_index=True)
+        var_reverse = pd.concat([var_reverse1, var_reverse2], ignore_index=True)
+        ref = pd.concat([ref1, ref2], ignore_index=True)
+        ref_reverse = pd.concat([ref_reverse1, ref_reverse2], ignore_index=True)
+    else:
+        print("Loading ref + var embeddings...\n")
+        chunk_size = 10000
+        chunks = []
+        for chunk in tqdm(pd.read_csv(var_file, chunksize=chunk_size), desc="Progress", unit="rows"):
+            chunks.append(chunk)
+        var = pd.concat(chunks, ignore_index=True)
+        chunks = []
+        for chunk in tqdm(pd.read_csv(ref_file, chunksize=chunk_size), desc="Progress", unit="rows"):
+            chunks.append(chunk)
+        ref = pd.concat(chunks, ignore_index=True)
+        if os.path.exists(var_rev_file) and os.path.exists(ref_rev_file):
+            print("\nLoading reverse complement embeddings...\n")
+            var_reverse = pd.read_csv(var_rev_file)
+            ref_reverse = pd.read_csv(ref_rev_file)
 
-#######################################################
-#  Align embeddings with training variant labels; subsetting rows
-#######################################################
+############################################################
+#  Align predictors (embeddings and/or annos) with training labels
+############################################################
 
 if EMBED_COLS == "delta":
-        if "delta_reverse" not in locals():
-            final_common_snp_names = list(
-                set(data['PLINK_SNP_NAME'])
-                .intersection(delta['PLINK_SNP_NAME'])
-            )
-            data = data[data['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
-            delta = delta[delta['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
-            if not (delta.shape[0] == data.shape[0]):
-                raise ValueError("Number of rows in embeddings do not match number of rows in data.")
-        else:
-            # Step 1: Compute the strict intersection of PLINK_SNP_NAME across all dfs
-            final_common_snp_names = list(
-                set(data['PLINK_SNP_NAME'])
-                .intersection(delta['PLINK_SNP_NAME'])
-                .intersection(delta_reverse['PLINK_SNP_NAME'])
-            )
-            # Step 2: Filter all dfs simultaneously based on the common SNP names
-            data = data[data['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
-            delta = delta[delta['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
-            delta_reverse = delta_reverse[delta_reverse['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
-            print("Filtered labels file (data):", data.shape)
-            print("delta:", delta.shape, "delta_reverse:", delta_reverse.shape)
-            # Check if the number of rows match
-            if not (delta.shape[0] == data.shape[0] and
-                    delta_reverse.shape[0] == data.shape[0]):
-                raise ValueError("Number of rows in embeddings do not match number of rows in data.")
+    if "delta_reverse" not in locals():
+        final_common_snp_names = list(
+            set(data['PLINK_SNP_NAME'])
+            .intersection(delta['PLINK_SNP_NAME'])
+        )
+        data = data[data['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
+        delta = delta[delta['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
+        if not (delta.shape[0] == data.shape[0]):
+            raise ValueError("Number of rows in embeddings do not match number of rows.")
+    else:
+        # Step 1: Compute the strict intersection of PLINK_SNP_NAME across all dfs
+        final_common_snp_names = list(
+            set(data['PLINK_SNP_NAME'])
+            .intersection(delta['PLINK_SNP_NAME'])
+            .intersection(delta_reverse['PLINK_SNP_NAME'])
+        )
+        # Step 2: Filter all dfs simultaneously based on the common SNP names
+        data = data[data['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
+        delta = delta[delta['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
+        delta_reverse = delta_reverse[delta_reverse['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
+        print("Filtered labels file (data):", data.shape)
+        print("delta:", delta.shape, "delta_reverse:", delta_reverse.shape)
+        # Check if the number of rows match
+        if not (delta.shape[0] == data.shape[0] and
+                delta_reverse.shape[0] == data.shape[0]):
+            raise ValueError("Number of rows in embeddings do not match number of rows.")
 
 if EMBED_COLS == "refvar":
         if "var_reverse" not in locals():
@@ -464,7 +492,7 @@ if EMBED_COLS == "refvar":
             ref = ref[ref['PLINK_SNP_NAME'].isin(final_common_snp_names)].reset_index(drop=True)
             if not (var.shape[0] == data.shape[0] and
                     ref.shape[0] == data.shape[0]):
-                raise ValueError("Number of rows in embeddings do not match number of rows in data.")
+                raise ValueError("Number of rows in embeddings do not match number of rows.")
             print("var:", var.shape, "ref:", ref.shape)
         
         else:
@@ -489,100 +517,122 @@ if EMBED_COLS == "refvar":
                     var_reverse.shape[0] == data.shape[0] and
                     ref.shape[0] == data.shape[0] and
                     ref_reverse.shape[0] == data.shape[0]):
-                raise ValueError("Number of rows in embeddings do not match number of rows in data.")
+                raise ValueError("Number of rows in embeddings do not match number of rows.")
 
-#######################################################
-# Subset columns
-#   - Drop the 'input_file' and 'layer' columns
-#######################################################
-plink_snp_names = data['PLINK_SNP_NAME']  # Assuming all DataFrames have the same PLINK_SNP_NAME column
-N_vars = data.shape[0]
-
-if "FDR" in y_label:
-    rovher_score = data['rovher_score']  # Assuming all DataFrames have the same PLINK_SNP_NAME column
+##################################################################
+# Subset embedding columns, removing 'input_file' and 'layer' columns
+###################################################################
 
 if EMBED_COLS == "delta":
-        print(f"-------------------------------------\n")
-        if "delta_reverse" not in locals():
-            delta = delta.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
-        else:
-            delta = delta.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
-            delta_reverse = delta_reverse.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
-            print(f"Reverse complement embeddings: {delta_reverse.shape}") 
-        print(f"Variant embeddings: {delta.shape}")
+    print(f"-------------------------------------\n")
+    if "delta_reverse" not in locals():
+        delta = delta.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
+    else:
+        delta = delta.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
+        delta_reverse = delta_reverse.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
+        print(f"Reverse complement embeddings: {delta_reverse.shape}") 
+            
+        # Scale delta rev embedding 
+        scaler = MinMaxScaler()
+        delta_reverse = pd.DataFrame(scaler.fit_transform(delta_reverse.values), columns=delta_reverse.columns)
+        
+    # scale delta embedding
+    scaler = MinMaxScaler()
+    delta = pd.DataFrame(scaler.fit_transform(delta.values) , columns=delta.columns)
+    print(f"Variant embeddings: {delta.shape}")
 
 if EMBED_COLS == "refvar":
-        if "ref_reverse" not in locals():
-            var = var.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
-            ref = ref.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
-        else:
-            var = var.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
-            var_reverse = var_reverse.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
-            ref = ref.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
-            ref_reverse = ref_reverse.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
-            print(f"Reverse complement embeddings: {var_reverse.shape}") 
-        print(f"Variant embeddings: {var.shape}")
+    if "ref_reverse" not in locals():
+        var = var.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
+        ref = ref.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
+    else:
+        var = var.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
+        var_reverse = var_reverse.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
+        ref = ref.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
+        ref_reverse = ref_reverse.drop(columns=['PLINK_SNP_NAME','input_file', 'layer'])
+        print(f"Reverse complement embeddings: {var_reverse.shape}") 
+        scaler = MinMaxScaler()
+        var_reverse = pd.DataFrame(scaler.fit_transform(var_reverse.values), columns=var_reverse.columns)
+        ref_reverse = pd.DataFrame(scaler.fit_transform(ref_reverse.values), columns=ref_reverse.columns)
+    scaler = MinMaxScaler()
+    var = pd.DataFrame(scaler.fit_transform(var.values), columns=var.columns)
+    ref = pd.DataFrame(scaler.fit_transform(ref.values), columns=ref.columns)
+
+    print(f"ref embeddings: {ref.shape}    var: {var.shape}")
 print(f"-------------------------------------\n")
 
 #######################################################
-# Clean up 75 functional annotations; removing cols 
+# Clean up 75 functional annotations:
+#       - removing cols trained on clinvar data
+#       - scale annotations
+#        - convert to anno_vec
 #######################################################
-if y_label == "class" or "FDR" in y_label:
-    data = data.drop(columns=['clinvar'], errors='ignore')
-    print(f"Data shape after dropping class: {data.shape}")
 
-print(f"data: {data.shape}\n")
-print(data.iloc[:2, :8], "\n")  # Use .iloc for positional indexing
+# Store for later 
+plink_snp_names = data['PLINK_SNP_NAME'] 
+N_vars = data.shape[0]
+if "FDR" in y_label:
+    rovher_score = data['rovher_score'] 
 
-if ANNO_COLS == "yes":
-    if data.isnull().values.any():
-        print("There are NA values in the data.")
-        sys.exit(1)
+# if y_label == "class" or "FDR" in y_label:
+#     data = data.drop(columns=['clinvar'], errors='ignore')
+
+print(f"Functional annotations: {data.shape}\n")
+print(data.iloc[:2, :8], "\n")
+
+if ANNO_COLS == "yes":   
+    # remove annotations trained on clinical labels
     columns_to_remove = [
     "PLINK_SNP_NAME", "Gene.refGene", "height_FDR", "rovher_score",
     "VEST4_score", "ClinPred_score", "gMVP_score", "fathmm-XF_coding_score",
     "REVEL_score", "M-CAP_score", "MetaLR_score", "MetaRNN_score", 
     "BayesDel_noAF_score", "BayesDel_addAF_rankscore"
     ]
-    data2 = data.drop(columns=columns_to_remove, errors='ignore')
-    anno_vec = data2.values    
+    anno_data = data.drop(columns=columns_to_remove, errors='ignore')
+
+    # scale functional annotations 
+    anno_data = anno_data.apply(pd.to_numeric, errors='coerce')  # Convert to numeric, coerce errors to NaN
+    scaler = MinMaxScaler()
+    anno_data_scaled = pd.DataFrame(scaler.fit_transform(anno_data.values), columns=anno_data.columns)
+    anno_vec = anno_data_scaled.values 
+
+if data.isnull().values.any():
+    print("There are NA values in functional annotation columns.")
+    sys.exit(1)
 
 #######################################################
-# Build feature vector by concatenation (embeddings)
+# Create x-feature vectors by concatenation (embeddings)
 #######################################################
+if EMBED_COLS == "delta":
+    if "delta_reverse" not in locals():  # Check if delta_reverse doesn't exist
+        feature_vec = np.hstack([
+        delta.values,  # delta embeddings only
+    ])
+    else:
+        feature_vec = np.hstack([
+            delta.values,         # delta embeddings
+            delta_reverse.values, # Reverse complement
+    ])
+
+if EMBED_COLS == "refvar":
+    if "ref_reverse" not in locals():
+        feature_vec = np.hstack([
+            ref.values,         # Reference embeddings
+            var.values,         # Variant embeddings
+        ])
+    else:
+        feature_vec = np.hstack([
+        ref.values,         # Reference embeddings
+        ref_reverse.values, # Reverse complement of reference
+        var.values,         # Variant embeddings
+        var_reverse.values  # Reverse complement of variant
+    ])
 
 if ANNO_COLS == "yes" and EMBED_COLS == "no":
-    feature_vec = data2.values
+    feature_vec = anno_data_scaled.values
     print(f"Feature_vec (annotations only): {feature_vec.shape}")
-    del data2
+    del anno_data_scaled
 
-if EMBED_COLS == "delta":
-        
-        if "delta_reverse" not in locals():  # Check if delta_reverse doesn't exist
-            feature_vec = np.hstack([
-                delta.values,  # delta embeddings only
-            ])
-        else:
-            feature_vec = np.hstack([
-                delta.values,         # delta embeddings
-                delta_reverse.values, # Reverse complement
-            ])
-elif EMBED_COLS == "refvar":
-        if "ref_reverse" not in locals():
-            feature_vec = np.hstack([
-                ref.values,         # Reference embeddings
-                var.values,         # Variant embeddings
-            ])
-        else:
-            feature_vec = np.hstack([
-            ref.values,         # Reference embeddings
-            ref_reverse.values, # Reverse complement of reference
-            var.values,         # Variant embeddings
-            var_reverse.values  # Reverse complement of variant
-        ])
-else:
-        raise ValueError("Invalid EMBED_COLS specified. Choose from: delta, refvar.")
-    
 if ANNO_COLS == "yes":
     print(f"Concatenating {feature_vec.shape} embeddings with {anno_vec.shape} annos...\n")
     feature_vec = np.hstack([
@@ -591,7 +641,6 @@ if ANNO_COLS == "yes":
     ])
 print(f"Concatenated x-feature vector: {feature_vec.shape}") #  (812, 8194)
 print(f"feature_vec:\n{feature_vec[:4, :5]}\n")  # Use [:4, :5] to show first 4 rows and 5 columns
-
 
 #######################################################
 # Extract y-label vectors
@@ -785,28 +834,28 @@ if "chr" in REGION:
 # (for continous)
 #######################################################
 
-if "FDR" in y_label:
-    df = pd.read_csv(score_file, sep='\t')
-    plt.figure(figsize=(8, 6), facecolor=BACKGROUND_COLOR)
-    plt.style.use("default")
-    plt.scatter(
-        df["rovher_NN_score"],  # x-axis
-        df["rovher_score"],     # y-axis
-        color=NVIDIA_GREEN,     # Points color
-        alpha=0.8,              # Transparency
-        edgecolor="black",      # Border color for points
-        linewidth=0.5
-    )
-    # Customize axes labels
-    plt.xlabel("RovHer scores (NN)", color=FONT_COLOR, fontsize=12)
-    plt.ylabel("RovHer scores (MARS)", color=FONT_COLOR, fontsize=12)
-    plt.title("Chr17 RV RovHer scores generated by neural network vs MARS\n y-variable: height FDR", color=FONT_COLOR, fontsize=14)
-    plt.grid(color=GRID_COLOR, linestyle="--", linewidth=0.7)
-    plt.gca().set_facecolor(BACKGROUND_COLOR)
-    plt.tick_params(colors=FONT_COLOR)
-    plt.tight_layout()
-    plt.savefig(plot3)
-    plt.show()
+# if "FDR" in y_label:
+#     df = pd.read_csv(score_file, sep='\t')
+#     plt.figure(figsize=(8, 6), facecolor=BACKGROUND_COLOR)
+#     plt.style.use("default")
+#     plt.scatter(
+#         df["rovher_NN_score"],  # x-axis
+#         df["rovher_score"],     # y-axis
+#         color=NVIDIA_GREEN,     # Points color
+#         alpha=0.8,              # Transparency
+#         edgecolor="black",      # Border color for points
+#         linewidth=0.5
+#     )
+#     # Customize axes labels
+#     plt.xlabel("RovHer scores (NN)", color=FONT_COLOR, fontsize=12)
+#     plt.ylabel("RovHer scores (MARS)", color=FONT_COLOR, fontsize=12)
+#     plt.title("Chr17 RV RovHer scores generated by neural network vs MARS\n y-variable: height FDR", color=FONT_COLOR, fontsize=14)
+#     plt.grid(color=GRID_COLOR, linestyle="--", linewidth=0.7)
+#     plt.gca().set_facecolor(BACKGROUND_COLOR)
+#     plt.tick_params(colors=FONT_COLOR)
+#     plt.tight_layout()
+#     plt.savefig(plot3)
+#     plt.show()
 
 #######################################################
 # Evlauate on test/validation set (binary classification)

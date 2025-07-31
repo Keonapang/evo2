@@ -200,11 +200,71 @@ Rscript "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/evo2_pilot_
 # For Guilherme's analysis 
 # path: /mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/evo2_AF_gene
 # SCRIPT TAKES IN INPUT VARIANT FILE FROM THE SAME CHROMOSOME ONLY!
+docker pull nvcr.io/nvidia/clara/bionemo-framework:2.6.2
+docker run --rm -it --gpus all \
+  nvcr.io/nvidia/clara/bionemo-framework:2.6.2 \
+  /bin/bash
 pip install matplotlib pandas seaborn scikit-learn openpyxl biopython
 
+
+# TRANSFER FILES
+DOCKERS="d74be1f63a8b 53edea3966c2"
+verb_workspace="."
+input_files=(
+    "run_evo2_rovher.py"
+    "ACTC1.txt"
+    "ACTN2.txt"
+    "ALPK3.txt"
+    "BAG3.txt"
+    "CSRP3.txt"
+    "DES.txt"
+    "DSC2.txt"
+    "DSG2.txt"
+    "DSP.txt"
+    "FHOD3.txt"
+    "FLNC.txt"
+    "JPH2.txt"
+    "LMNA.txt"
+    "MYBPC3.txt"
+    "MYH7.txt"
+    "MYL2.txt"
+    "MYL3.txt"
+    "NEXN.txt"
+    "PKP2.txt"
+    "PLN.txt"
+    "RBM20.txt"
+    "SCN5A.txt"
+    "TMEM43.txt"
+    "TNNC1.txt"
+    "TNNT2.txt"
+    "TPM1.txt"
+    "TTN.txt"
+    "VCL.txt"
+    "GRCh38_chr1.fasta"
+    "GRCh38_chr2.fasta"
+    "GRCh38_chr3.fasta"
+    "GRCh38_chr6.fasta"
+    "GRCh38_chr7.fasta"
+    "GRCh38_chr10.fasta"
+    "GRCh38_chr11.fasta"
+    "GRCh38_chr12.fasta"
+    "GRCh38_chr14.fasta"
+    "GRCh38_chr15.fasta"
+    
+
+)
+for docker in $DOCKERS; do
+for file in "${input_files[@]}"; do
+    docker cp "${verb_workspace}/${file}" "${docker}:/workspace/${file}" && echo "Moved ${file}." || echo "Failed to copy ${file}"
+done
+done
+
 # Modify arrays for gene set 
-INPUT_FILES=("ACTC1.txt" "ACTN2.txt" "ALPK3.txt" "BAG3.txt" "CSRP3.txt" "DES.txt" "DSC2.txt" "DSG2.txt" "DSP.txt" "FHOD3.txt" "FLNC.txt" "JPH2.txt" "LMNA.txt" "MYBPC3.txt" "MYH7.txt" "MYL2.txt" "MYL3.txt" "NEXN.txt" "PKP2.txt" "PLN.txt" "RBM20.txt" "SCN5A.txt" "TMEM43.txt" "TNNC1.txt" "TNNT2.txt" "TPM1.txt" "TTN.txt" "VCL.txt")
-REF_CHRS=("15" "1" "15" "10" "11" "2" "18" "18" "6" "18" "7" "20" "1" "11" "14" "12" "3" "1" "12" "6" "10" "3" "3" "3" "1" "15" "2" "10")
+INPUT_FILES=("ALPK3.txt" "BAG3.txt" "DES.txt" "DSC2.txt" "DSG2.txt" "DSP.txt" "FHOD3.txt" "FLNC.txt" "JPH2.txt" "LMNA.txt" "MYBPC3.txt" "MYH7.txt" "MYL2.txt" "MYL3.txt" "NEXN.txt" "PKP2.txt"
+             "RBM20.txt" "SCN5A.txt" "TMEM43.txt" "TNNC1.txt" "TNNT2.txt" "TTN.txt" "VCL.txt")
+REF_CHRS=("15" "10" "2" "18" "18" "6" "18" "7" "20" "1" "11" "14" "12" "3" "1" "12"
+        "10" "3" "3" "3" "1" "2" "10")
+# chromosomes 1,2,3,6,7,10,11,12,14,15,18,20
 
 WINDOW_SIZE="8192"
 USE_RANDOM_SEED="True"
@@ -217,6 +277,33 @@ done
                            # --REF_CHR $REF_CHR --SUBSET_METHOD $SUBSET_METHOD --SEQ_LENGTH $SEQ_LENGTH
 
 
+# ---- Move to ALL .csv from docker container to workspace ----
+verb_workspace="."
+for docker in $DOCKERS; do
+  csv_files=$(docker exec "${docker}" bash -c "ls /workspace/*.csv 2>/dev/null")
+  if [ -n "$csv_files" ]; then
+      for file in $csv_files; do
+          filename=$(basename "$file")
+          docker cp "${docker}:${file}" "${verb_workspace}/"
+          echo "Copied: $filename"
+      done
+  else
+      echo "No .csv FOUND."
+  fi
+done
+verb_workspace="."
+for docker in $DOCKERS; do
+  csv_files=$(docker exec "${docker}" bash -c "ls /workspace/*.xlsx 2>/dev/null")
+  if [ -n "$csv_files" ]; then
+      for file in $csv_files; do
+          filename=$(basename "$file")
+          docker cp "${docker}:${file}" "${verb_workspace}/"
+          echo "Copied: $filename"
+      done
+  else
+      echo "No .xlsx FOUND."
+  fi
+done
 ################################ useful code! ################################
 # Objective: Check which files from $INPUT_FILES exist in directory $path 
 missing_files=()

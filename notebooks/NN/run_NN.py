@@ -92,70 +92,67 @@ Y_LABEL="clinvar" # "clinvar" "class" "height_FDR"
 EMBED_COLS="refvar"   # delta, refvar, no
 ANNO_COLS="yes"        # yes or no
 REGION="BRCA1_DATA"
-
-BLKS=["12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29"]        # delta, refvar 
-Y_LABEL="clinvar" # "clinvar" "class" "height_FDR"
-EMBED_COLS="delta"   # delta, refvar, no
-ANNO_COLS="yes"        # yes or no
-REGION="BRCA1_DATA"
-
-BLKS=["20", "22"]        # delta, refvar 
-Y_LABEL="class" # "clinvar" "class" "height_FDR"
-EMBED_COLS="refvar"   # delta, refvar, no
-ANNO_COLS="no"        # yes or no
-VAR_WIN="256" # 128 or 256
-REGION="BRCA1_DATA"
-
-BLKS=["20"]        # delta, refvar 
-Y_LABEL="height_FDR" # "clinvar" "class" "height_FDR"
-EMBED_COLS="refvar"   # delta, refvar, no
-ANNO_COLS="yes"        # yes or no
-REGION="BRCA1_DATA"
-
-BLKS=["12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29"]        # delta, refvar 
-Y_LABEL="class" # "clinvar" "class" "height_FDR"
-EMBED_COLS="refvar"   # delta, refvar, no
-ANNO_COLS="no"
-REGION="RovHer_BRCA1" # BRCA1_DATA, RovHer_BRCA1, "RovHer_chr17"
 #------------------------------- July 27
 
-BLKS=["6", "7", "8", "9", "10", "11"]        # delta, refvar
+BLKS=["6", "7", "8", "9", "10", "11"]  
 
 Y_LABEL="clinvar" # "clinvar" "class" "height_FDR"
 EMBED_COLS="refvar"   # delta, refvar, no
 ANNO_COLS="yes"
-REGION="BRCA1_DATA" # BRCA1_DATA, RovHer_BRCA1, "RovHer_chr17"
+REGION="BRCA1_DATA" # BRCA1_DATA, RovHer_BRCA
 
 Y_LABEL="clinvar" # "clinvar" "class" "height_FDR"
 EMBED_COLS="refvar"   # delta, refvar, no
 ANNO_COLS="no"
-REGION="BRCA1_DATA" # BRCA1_DATA, RovHer_BRCA1, "RovHer_chr17"
+REGION="BRCA1_DATA" # BRCA1_DATA, RovHer_BRCA1
 
 Y_LABEL="clinvar" # "clinvar" "class" "height_FDR"
 EMBED_COLS="refvar"   # delta, refvar, no
 ANNO_COLS="no"
-REGION="RovHer_BRCA1" # BRCA1_DATA, RovHer_BRCA1, "RovHer_chr17"
+REGION="RovHer_BRCA1" # BRCA1_DATA, RovHer_BRCA1
 
 
-BLKS=["17","18","19", "20","21", "22", "24", "24"]        # delta, refvar
-
+BLKS=["17","18","19", "20","21", "22", "24", "24"]
 Y_LABEL="clinvar" # "clinvar" "class" "height_FDR"
-EMBED_COLS="refvar"   # delta, refvar, no
+EMBED_COLS="refvar" # delta, refvar, no
 ANNO_COLS="no"
-REGION="BRCA1_DATA" # BRCA1_DATA, RovHer_BRCA1, "RovHer_chr17"
+REGION="BRCA1_DATA" # BRCA1_DATA, RovHer_BRCA1
 
 
-BLKS=["18", "17"]
-Y_LABEL="class" # "clinvar" "class" "height_FDR"
-EMBED_COLS="refvar"   # delta, refvar, no
-ANNO_COLS="no"
+#########  No embeddings, just functional annotations #########
+BLKS=["28"]
+VAR_WINS = ["1"]
+
 REGION="BRCA1_DATA"
-VAR_WINS = ["32", "64", "128", "256"]  # Different VAR_WIN values
+Y_LABEL="class" # "clinvar"
+EMBED_COLS="delta"   # delta, refvar, no
+ANNO_COLS="yes"
+
+REGION="BRCA1_DATA"
+Y_LABEL="class" # "clinvar" "class"
+EMBED_COLS="delta"   # delta, refvar, no
+ANNO_COLS="yes"
+
+REGION="BRCA1_DATA"
+Y_LABEL="class" # "clinvar"
+EMBED_COLS="refvar"   # delta, refvar, no
+ANNO_COLS="yes"
+
+REGION="BRCA1_DATA"
+Y_LABEL="clinvar" # "clinvar"
+EMBED_COLS="refvar"   # delta, refvar, no
+ANNO_COLS="yes"
+
+
+REGION="RovHer_BRCA1"
+Y_LABEL="clinvar" # "clinvar"
+EMBED_COLS="no"   # delta, refvar, no
+ANNO_COLS="yes"
 
 #-------------------------------
-CORES=5
-EPOCH=100
-iterations=5
+CORES=12
+EPOCH=80
+iterations=6
 def run_script(blk, var_win, cores, i):
     LAYER = f"blocks.{blk}.mlp.l3"
     cmd = (
@@ -175,7 +172,58 @@ def run_script(blk, var_win, cores, i):
 if __name__ == "__main__":
     for var_win in VAR_WINS:  # Iterate over different VAR_WIN values
         for blk in BLKS:  # Iterate over block layers
-            for i in range(1, iterations + 1):
+            for i in range(0, iterations + 1):
+                run_script(blk, var_win, CORES, i)
+
+
+
+
+
+
+
+
+
+
+#------------------------------- July 30 #-------------------------------
+
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import sys
+import argparse
+import multiprocessing
+import subprocess
+
+BLKS=["28"]
+Y_LABEL="height_FDR" # "clinvar" "class" "height_FDR"
+EMBED_COLS="no"   # delta, refvar, no
+ANNO_COLS="yes"
+REGION="RovHer_chr17"
+VAR_WINS=["1"]
+
+#-------------------------------
+CORES=12
+EPOCH=80
+iterations=6
+def run_script(blk, var_win, cores, i):
+    LAYER = f"blocks.{blk}.mlp.l3"
+    cmd = (
+        f"python3.11 /mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/NN/rovher_NN2.py "
+        f"--REGION {REGION} "
+        f"--LAYER {LAYER} "
+        f"--Y_LABEL {Y_LABEL} "
+        f"--EMBED_COLS {EMBED_COLS} "
+        f"--ANNO_COLS {ANNO_COLS} "
+        f"--EPOCH {EPOCH} "
+        f"--i {i} "
+        f"--VAR_WIN {var_win}"
+    )
+    print(f"\nRUN : {cmd}\n")
+    os.system(cmd)
+
+if __name__ == "__main__":
+    for var_win in VAR_WINS:  # Iterate over different VAR_WIN values
+        for blk in BLKS:  # Iterate over block layers
+            for i in range(0, iterations + 1):
                 run_script(blk, var_win, CORES, i)
 
 
@@ -199,7 +247,7 @@ def run_script(args):
     blk, combo = args  # Unpack the arguments
     LAYER = f"blocks.{blk}.mlp.l3"
     cmd = (
-        f"python3.11 /mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/NN/rovher_NN.py "
+        f"python3.11 /mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/NN/rovher_NN2.py "
         f"--REGION {REGION} "
         f"--LAYER {LAYER} "
         f"--Y_LABEL {Y_LABEL} "

@@ -11,15 +11,27 @@
 
 MODEL="NN" # MARS or NN
 EMBED_COLS="refvar" # delta, refvar embedno
+VARWIN="1"
+ANNO_COLS="yes"
+
+MODEL="NN" # MARS or NN
+EMBED_COLS="delta" # delta, refvar embedno
+ANNO_COLS="yes"
+VARWIN="1"
+
+MODEL="NN" # MARS or NN
+EMBED_COLS="no" # delta, refvar embedno
+ANNO_COLS="yes"
+VARWIN="1"
 
 MODEL="MARS" # MARS or NN
 np="200" # 150,300
 EMBED_COLS="delta" # delta, refvar embedno
 p="0.01"
+ANNO_COLS="yes"
 
 LAYER="28"
 y_label="height_FDR" 
-ANNO_COLS="yes"
 # -------------------------------------------------------------------------------------------------
 if [ "$MODEL" == "MARS" ]; then
     anno_name="yhat"
@@ -32,7 +44,7 @@ else
     REGION="chr17"
     name="RovHer_${REGION}_blocks.${LAYER}.mlp.l3_${y_label}_anno${ANNO_COLS}"
     DIR_WORK="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/h2/${MODEL}/${EMBED_COLS}/${name}"
-    input_file="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/NN/RovHer/${y_label}/${EMBED_COLS}/RovHer_${REGION}_blocks.${LAYER}.mlp.l3_${y_label}_anno${ANNO_COLS}.txt"
+    input_file="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/NN/RovHer/${y_label}/${EMBED_COLS}/anno${ANNO_COLS}/RovHer_${REGION}_blocks.${LAYER}.mlp.l3_VARWIN${VARWIN}.txt"
 fi
 # Initialize
 echo ${DIR_WORK}

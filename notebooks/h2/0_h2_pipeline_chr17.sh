@@ -23,7 +23,7 @@
 # SCRIPT 3 & 4 - RV exome blocks
 ###########################################################################################################
 
-MODEL="MARS" # MARS or NN or RovHer
+MODEL="NN" # MARS or NN or RovHer
 EMBED_COLS="delta" # delta, refvar embedno
 LAYER="28"
 ANNO_COLS="yes"
@@ -37,6 +37,7 @@ if [ "$MODEL" == "MARS" ]; then
     DIR_WORK="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/h2/${MODEL}/${EMBED_COLS}/${name}"
     DIR="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/h2/${MODEL}/${EMBED_COLS}/${name}"
 elif [ "$MODEL" == "NN" ]; then
+    EMBED_COLS="refvar" # delta, refvar embedno
     anno_name="rovher_NN_score"
     REGION="chr17"
     name="RovHer_${REGION}_blocks.${LAYER}.mlp.l3_${y_label}_anno${ANNO_COLS}"
@@ -71,7 +72,7 @@ Rscript "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/h2/split_pr
 #         - clumped genotype matrices (all clumped RVs) from /8_GENO_0.1LD50kWIN_RDATA
 #   - output: smaller set of genotype blocks for RVs in each proportion in /2_GENO_0.1LD50kWIN_RDATA
 ########################################################################
-prop_blks=(10,5,1)
+prop_blks=(15,10,5,1)
 cores=15
 Rscript /mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/h2/2_geno_blks.r $DIR $input_file $prop_blks $cores
 
@@ -80,8 +81,8 @@ traits=("height" "LDL_direct" "Alkaline_phosphatase" "BMI" "ApoB" "ApoA" "Glycat
 
 traits=("height" "LDL_direct" "Alkaline_phosphatase" "BMI")
 traits=("ApoB" "ApoA" "Glycated_haemoglobin" "Triglycerides")
-traits=("alanine_aminotransferase" "C_reactive_protein")
-
+traits=("alanine_aminotransferase" "Alkaline_phosphatase")
+traits=("Urate" "Cystatin_C")
 # -------------------------------------------------------------
 # Scripts 3 and 4 (RARity)
 # -------------------------------------------------------------
@@ -91,9 +92,9 @@ DIR_CLUMP="${DIR_WORK}"
 echo ${DIR_WORK}
 script="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/Keona_scripts/RARity/exome_blk"
 
-for top in 100; do
+for top in 1 5 10; do
   for trait in "${traits[@]}"; do
-    cores=3
+    cores=8
     Rscript "${script}/3_align_geno_pheno.r" $anno_name $trait $DIR_WORK $DIR_CLUMP $top $cores
 
     threads=2
@@ -110,7 +111,7 @@ done
   # fi
 
 # -------------------------------------------------------------
-# Scrip to get h2 summary
+# Plot: h2 summary for top vs bottom 1000 RVs
 # -------------------------------------------------------------
 
 WIN="4096" # 4096
@@ -124,3 +125,15 @@ for subset in "${subsets[@]}"; do
   Rscript "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/h2/5_summarize_h2.r" $DIR_WORK $WIN $chr $subset $variant_subset
 done
 done
+
+
+# -------------------------------------------------------------
+# Plot: h2 summary for top vs bottom 1000 RVs
+# -------------------------------------------------------------
+top_list=(5)
+root="/mnt/nfs/rigenenfs/shared_resources/biobanks/UKBIOBANK/pangk/evo2/h2"
+NN_DIR="${root}/NN/refvar/RovHer_chr17_blocks.28.mlp.l3_height_FDR_annoyes"
+MARS_DIR="${root}/MARS/delta/RovHer_chr17_MARS_d3_np200_nv0.1_lowerAF0e+00_annoyes_embeddelta_blk28"
+rovher_DIR="${root}/RovHer/embedno/RovHer"
+
+Rscript "/mnt/nfs/rigenenfs/workspace/pangk/Softwares/evo2/notebooks/h2/get_h2_curve_excel_summary.r" $top_list $NN_DIR $MARS_DIR $rovher_DIR
